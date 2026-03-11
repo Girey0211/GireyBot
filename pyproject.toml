@@ -5,7 +5,7 @@ description = "Discord 서버 운영 지원 AI 에이전트"
 requires-python = ">=3.10"
 dependencies = [
     "discord.py>=2.3.0",
-    "python-dotenv>=1.0.0",
+    "openai>=2.26.0",
     "PyYAML>=6.0",
 ]
 

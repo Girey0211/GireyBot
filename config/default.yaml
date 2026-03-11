@@ -1,4 +1,5 @@
-# config/default.yaml — 모든 서버에 공통 적용되는 기본값
+# config/default.yaml — 모든 서버에 공통 적용되는 기본값 (동작 설정)
+# 민감 정보(토큰, API 키) 및 LLM 설정은 프로젝트 루트의 secrets.yaml에 정의합니다.
 
 skills:
   enabled: []                     # 빈 리스트 = 전체 활성화
@@ -12,10 +13,7 @@ auto_detect:
 
 mcp_servers: []                   # 사용 가능한 MCP 서버 목록
 
-ollama:
-  model: "llama3"                 # 기본 LLM 모델
-  host: null                      # null이면 OLLAMA_HOST 환경변수 사용
-
+# ─── 응답 설정 ────────────────────────────────────────────────
 response:
   language: "auto"                # 응답 언어 (auto = 요청 언어 따라감)
   max_length: 2000                # Discord 메시지 길이 제한
