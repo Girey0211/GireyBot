@@ -13,6 +13,7 @@ from core.llm_client import (
     OpenAIClient,
     create_llm_client,
 )
+from core.memory import MemoryManager
 
 __all__ = [
     "deep_merge",
@@ -27,4 +28,6 @@ __all__ = [
     "OllamaClient",
     "OpenAIClient",
     "create_llm_client",
+    "MemoryManager",
 ]
+

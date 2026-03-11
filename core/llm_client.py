@@ -60,8 +60,15 @@ class BaseLLMClient(ABC):
         self,
         prompt: str,
         system_prompt: str | None = None,
+        context: str | None = None,
     ) -> LLMResponse:
-        """일반 채팅 요청을 처리합니다."""
+        """일반 채팅 요청을 처리합니다.
+
+        Args:
+            prompt: 사용자 메시지
+            system_prompt: 시스템 프롬프트
+            context: 메모리 컨텍스트 (최근 대화, 유저 팩트 등)
+        """
         ...
 
     def _unavailable_response(self, reason: str) -> LLMResponse:
@@ -101,6 +108,7 @@ class OllamaClient(BaseLLMClient):
         self,
         prompt: str,
         system_prompt: str | None = None,
+        context: str | None = None,
     ) -> LLMResponse:
         logger.debug(f"[Ollama] 채팅 요청 (스텁): {prompt[:50]}...")
         return self._unavailable_response(
@@ -210,6 +218,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         prompt: str,
         system_prompt: str | None = None,
+        context: str | None = None,
     ) -> LLMResponse:
         """OpenAI로 채팅 요청을 처리합니다."""
         if not self._available or not self._client:
@@ -220,6 +229,9 @@ class OpenAIClient(BaseLLMClient):
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        # 메모리 컨텍스트를 system 메시지로 삽입
+        if context:
+            messages.append({"role": "system", "content": context})
         messages.append({"role": "user", "content": prompt})
 
         try:

@@ -13,6 +13,17 @@ auto_detect:
 
 mcp_servers: []                   # 사용 가능한 MCP 서버 목록
 
+# ─── 메모리 설정 ──────────────────────────────────────────────
+memory:
+  db_path: "data/memory.db"         # SQLite DB 경로
+  persona_path: "data/persona.md"   # 봇 페르소나 파일 경로
+  max_history: 10                   # 컨텍스트에 포함할 최근 대화 수
+  max_facts: 20                     # 컨텍스트에 포함할 최대 팩트 수
+  max_summaries: 5                  # 컨텍스트에 포함할 최대 요약 수
+  auto_extract_facts: true          # 대화에서 자동으로 사실 추출 여부
+  retention_days: 7                 # 대화 기록 보존 기한 (일)
+  cleanup_interval_hours: 24        # 자동 정리 주기 (시간)
+
 # ─── 응답 설정 ────────────────────────────────────────────────
 response:
   language: "auto"                # 응답 언어 (auto = 요청 언어 따라감)

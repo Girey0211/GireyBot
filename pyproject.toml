@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Discord 서버 운영 지원 AI 에이전트"
 requires-python = ">=3.10"
 dependencies = [
+    "aiosqlite>=0.22.1",
     "discord.py>=2.3.0",
     "openai>=2.26.0",
     "PyYAML>=6.0",
