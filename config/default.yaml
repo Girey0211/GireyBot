@@ -1,0 +1,22 @@
+# config/default.yaml — 모든 서버에 공통 적용되는 기본값
+
+skills:
+  enabled: []                     # 빈 리스트 = 전체 활성화
+  disabled: []                    # 명시적 비활성화 목록
+  entries: {}                     # 개별 스킬 오버라이드 (OpenClaw 호환)
+
+auto_detect:
+  enabled: true
+  channels: []                    # 빈 리스트 = 전체 채널 감시
+  keywords: []                    # 추가 감지 키워드 (봇 이름은 기본 포함)
+
+mcp_servers: []                   # 사용 가능한 MCP 서버 목록
+
+ollama:
+  model: "llama3"                 # 기본 LLM 모델
+  host: null                      # null이면 OLLAMA_HOST 환경변수 사용
+
+response:
+  language: "auto"                # 응답 언어 (auto = 요청 언어 따라감)
+  max_length: 2000                # Discord 메시지 길이 제한
+  use_embed: true                 # Embed 형식 사용 여부
