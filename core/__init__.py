@@ -4,8 +4,8 @@ from core.config_loader import (
     load_guild_config,
     get_bot_names,
 )
-from core.call_detector import CallDetector, CallDetectionResult
-from core.llm_client import (
+from core.detection import CallDetector, CallDetectionResult
+from core.llm import (
     BaseLLMClient,
     LLMClient,
     LLMResponse,
@@ -14,6 +14,7 @@ from core.llm_client import (
     create_llm_client,
 )
 from core.memory import MemoryManager
+from core.agent import GireyBot
 
 __all__ = [
     "deep_merge",
@@ -29,5 +30,5 @@ __all__ = [
     "OpenAIClient",
     "create_llm_client",
     "MemoryManager",
+    "GireyBot",
 ]
-

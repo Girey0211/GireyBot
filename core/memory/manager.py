@@ -1,144 +1,30 @@
 """
-메모리 관리 모듈 — 하이브리드 메모리 시스템
+하이브리드 메모리 관리자
 
 정적 메모리(MD 파일)와 동적 메모리(SQLite)를 결합하여
-봇의 영구적 기억 기능을 제공합니다.
-
-테이블 구조:
-- conversations: 대화 기록 (TTL 기반 수명 관리)
-- summaries: 축약된 대화 요약 (영구)
-- important_events: 중요 사건/이벤트 (영구)
-- user_facts: 유저별 학습된 사실 (영구)
+LLM에 전달할 컨텍스트를 빌드합니다.
 """
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
-from dataclasses import dataclass
 
 import aiosqlite
+
+from core.memory.models import (
+    KST,
+    Conversation,
+    Summary,
+    ImportantEvent,
+    UserFact,
+)
+from core.memory.schema import SCHEMA_SQL, migrate
 
 logger = logging.getLogger("girey-bot.memory")
 
 # 프로젝트 루트
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-# ─── 데이터 클래스 ───────────────────────────────────────────
-
-KST = timezone(timedelta(hours=9))
-
-
-@dataclass
-class Conversation:
-    """대화 기록"""
-    id: int
-    guild_id: int
-    channel_id: int
-    user_id: int
-    user_name: str
-    user_message: str
-    bot_response: str
-    reaction_count: int
-    created_at: str
-
-
-@dataclass
-class Summary:
-    """축약된 대화 요약"""
-    id: int
-    guild_id: int
-    channel_id: int
-    summary: str
-    period_start: str
-    period_end: str
-    message_count: int
-    created_at: str
-
-
-@dataclass
-class ImportantEvent:
-    """중요 사건/이벤트"""
-    id: int
-    guild_id: int
-    channel_id: int
-    event_title: str
-    description: str
-    participants: str  # JSON 배열 문자열
-    importance: str  # "high" | "critical"
-    occurred_at: str
-    created_at: str
-
-
-@dataclass
-class UserFact:
-    """유저별 학습된 사실"""
-    id: int
-    guild_id: int
-    user_id: int
-    fact: str
-    category: str  # "preference" | "info" | "request"
-    source_message_id: int | None
-    created_at: str
-
-
-# ─── SQL 스키마 ──────────────────────────────────────────────
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS conversations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id        INTEGER NOT NULL,
-    channel_id      INTEGER NOT NULL,
-    user_id         INTEGER NOT NULL,
-    user_name       TEXT    NOT NULL,
-    user_message    TEXT    NOT NULL,
-    bot_response    TEXT    NOT NULL,
-    reaction_count  INTEGER DEFAULT 0,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_conv_channel ON conversations(channel_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_conv_user    ON conversations(user_id, created_at);
-
-CREATE TABLE IF NOT EXISTS summaries (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id        INTEGER NOT NULL,
-    channel_id      INTEGER NOT NULL,
-    summary         TEXT    NOT NULL,
-    period_start    TEXT    NOT NULL,
-    period_end      TEXT    NOT NULL,
-    message_count   INTEGER DEFAULT 0,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_sum_channel ON summaries(channel_id, created_at);
-
-CREATE TABLE IF NOT EXISTS important_events (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id        INTEGER NOT NULL,
-    channel_id      INTEGER NOT NULL,
-    event_title     TEXT    NOT NULL,
-    description     TEXT    NOT NULL,
-    participants    TEXT    DEFAULT '[]',
-    importance      TEXT    DEFAULT 'high',
-    occurred_at     TEXT    NOT NULL,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_guild ON important_events(guild_id, occurred_at);
-
-CREATE TABLE IF NOT EXISTS user_facts (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id          INTEGER NOT NULL,
-    user_id           INTEGER NOT NULL,
-    fact              TEXT    NOT NULL,
-    category          TEXT    DEFAULT 'info',
-    source_message_id INTEGER,
-    created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_facts_user ON user_facts(user_id);
-"""
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class MemoryManager:
@@ -150,10 +36,6 @@ class MemoryManager:
     """
 
     def __init__(self, config: dict):
-        """
-        Args:
-            config: 전체 설정 dict (memory 섹션 사용)
-        """
         mem_config = config.get("memory", {})
         self.db_path = BASE_DIR / mem_config.get("db_path", "data/memory.db")
         self.persona_path = BASE_DIR / mem_config.get("persona_path", "data/persona.md")
@@ -171,12 +53,12 @@ class MemoryManager:
 
     async def initialize(self):
         """DB 초기화 및 테이블 생성"""
-        # data 디렉토리 보장
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._db = await aiosqlite.connect(str(self.db_path))
         self._db.row_factory = aiosqlite.Row
-        await self._db.executescript(_SCHEMA_SQL)
+        await self._db.executescript(SCHEMA_SQL)
+        await migrate(self._db)
         await self._db.commit()
         logger.info(f"메모리 DB 초기화 완료: {self.db_path}")
 
@@ -213,6 +95,7 @@ class MemoryManager:
         user_name: str,
         user_message: str,
         bot_response: str,
+        channel_name: str = "",
         reaction_count: int = 0,
     ) -> int:
         """대화를 저장하고 새 레코드의 ID를 반환합니다."""
@@ -220,15 +103,15 @@ class MemoryManager:
         async with self._db.execute(
             """
             INSERT INTO conversations
-                (guild_id, channel_id, user_id, user_name,
+                (guild_id, channel_id, channel_name, user_id, user_name,
                  user_message, bot_response, reaction_count, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (guild_id, channel_id, user_id, user_name,
+            (guild_id, channel_id, channel_name, user_id, user_name,
              user_message, bot_response, reaction_count, now),
         ) as cursor:
             await self._db.commit()
-            logger.debug(f"대화 저장 완료: user={user_name}, channel={channel_id}")
+            logger.debug(f"대화 저장 완료: user={user_name}, channel=#{channel_name}({channel_id})")
             return cursor.lastrowid
 
     async def get_recent_conversations(
@@ -394,16 +277,15 @@ class MemoryManager:
         channel_id: int,
         user_id: int,
     ) -> str:
-        """
-        LLM에 전달할 메모리 컨텍스트를 조립합니다.
-
-        조립 순서:
-        1. 유저 팩트
-        2. 중요 이벤트
-        3. 최근 요약
-        4. 최근 대화 기록
-        """
+        """LLM에 전달할 메모리 컨텍스트를 조립합니다."""
         parts: list[str] = []
+
+        # 0. 현재 시각 기준 정보
+        now = datetime.now(KST)
+        parts.append(
+            f"## 현재 시각\n"
+            f"- {now.strftime('%Y년 %m월 %d일 %A %H:%M')} (KST)"
+        )
 
         # 1. 유저 팩트
         facts = await self.get_user_facts(user_id)
@@ -433,7 +315,7 @@ class MemoryManager:
         history = await self.get_recent_conversations(channel_id)
         if history:
             history_lines = "\n".join(
-                f"- {h.user_name}: {h.user_message}\n  봇: {h.bot_response}"
+                f"- [{self._format_timestamp(h.created_at)}] {h.user_name}: {h.user_message}\n  봇: {h.bot_response}"
                 for h in history
             )
             parts.append(f"## 최근 대화 기록\n{history_lines}")
@@ -483,8 +365,6 @@ class MemoryManager:
             if content.upper() == "NONE":
                 return
 
-            # JSON 파싱 시도
-            # LLM이 ```json ... ``` 으로 감쌌을 수 있음
             if content.startswith("```"):
                 content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
@@ -515,9 +395,6 @@ class MemoryManager:
         2. LLM으로 중요 이벤트 추출 → important_events에 영구 저장
         3. 나머지를 주제 단위로 요약 → summaries에 저장
         4. 원본 대화 삭제
-
-        Returns:
-            정리 결과 통계 dict
         """
         cutoff = (
             datetime.now(KST) - timedelta(days=self.retention_days)
@@ -525,7 +402,6 @@ class MemoryManager:
 
         stats = {"channels": 0, "deleted": 0, "events": 0, "summaries": 0}
 
-        # 만료 대화 조회
         async with self._db.execute(
             """
             SELECT * FROM conversations
@@ -540,7 +416,6 @@ class MemoryManager:
             logger.info("정리할 만료 대화 없음")
             return stats
 
-        # 채널별 그룹핑
         channels: dict[int, list[dict]] = {}
         for row in rows:
             row_dict = dict(row)
@@ -553,7 +428,6 @@ class MemoryManager:
             guild_id = conversations[0]["guild_id"]
             conv_count = len(conversations)
 
-            # 대화 텍스트 구성
             conv_text = "\n".join(
                 f"[{c['created_at']}] {c['user_name']}: {c['user_message']}"
                 f" (리액션: {c['reaction_count']})"
@@ -561,19 +435,15 @@ class MemoryManager:
             )
 
             if llm_client and llm_client.is_available:
-                # ── 2단계: 중요 이벤트 추출 ──
                 await self._extract_important_events(
                     llm_client, guild_id, channel_id, conv_text, conversations
                 )
-
-                # ── 3단계: 일반 요약 ──
                 await self._summarize_conversations(
                     llm_client, guild_id, channel_id, conv_text, conversations
                 )
             else:
                 logger.warning("LLM 미사용 — 요약 없이 대화 삭제")
 
-            # ── 4단계: 원본 삭제 ──
             conv_ids = [c["id"] for c in conversations]
             placeholders = ",".join("?" * len(conv_ids))
             await self._db.execute(
@@ -599,7 +469,6 @@ class MemoryManager:
         conversations: list[dict],
     ):
         """만료 대화에서 중요 이벤트를 추출합니다."""
-        # 리액션 수가 많은 메시지 정보를 강조
         high_reaction = [
             c for c in conversations if c["reaction_count"] >= 3
         ]
@@ -614,7 +483,6 @@ class MemoryManager:
                 )
             )
 
-        # 자주 언급된 주제 감지를 위한 참여자 수 정보
         unique_users = set(c["user_name"] for c in conversations)
         participant_hint = (
             f"\n\n[참고: 이 대화에 참여한 유저 수: {len(unique_users)}명 "
@@ -707,6 +575,21 @@ class MemoryManager:
             logger.warning(f"대화 요약 실패: {e}")
 
     # ─── 유틸 ───────────────────────────────────────────────
+
+    @staticmethod
+    def _format_timestamp(iso_str: str) -> str:
+        """ISO 타임스탬프를 읽기 쉬운 형식으로 변환합니다."""
+        try:
+            dt = datetime.fromisoformat(iso_str)
+            now = datetime.now(KST)
+            if dt.date() == now.date():
+                return f"오늘 {dt.strftime('%H:%M')}"
+            elif dt.date() == (now - timedelta(days=1)).date():
+                return f"어제 {dt.strftime('%H:%M')}"
+            else:
+                return dt.strftime("%m/%d %H:%M")
+        except (ValueError, TypeError):
+            return iso_str[:16]
 
     async def get_stats(self) -> dict:
         """메모리 통계를 반환합니다."""
