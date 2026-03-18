@@ -133,6 +133,50 @@ class MemoryManager:
             rows = await cursor.fetchall()
             return [Conversation(**dict(r)) for r in reversed(rows)]
 
+    async def get_conversation_session(
+        self,
+        channel_id: int,
+        gap_minutes: int = 10,
+        max_messages: int = 100,
+    ) -> list[Conversation]:
+        """현재 대화 세션을 조회합니다.
+
+        가장 최근 메시지부터 역순으로 탐색하여,
+        연속된 두 메시지 사이에 gap_minutes 이상 공백이 있으면
+        그 지점에서 세션을 끊습니다.
+
+        Returns:
+            시간순(오래된 것 먼저)으로 정렬된 대화 리스트
+        """
+        async with self._db.execute(
+            """
+            SELECT * FROM conversations
+            WHERE channel_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (channel_id, max_messages),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        if not rows:
+            return []
+
+        conversations = [Conversation(**dict(r)) for r in rows]
+        gap = timedelta(minutes=gap_minutes)
+
+        # 최신 메시지부터 역순으로 탐색하며 갭 탐지
+        session = [conversations[0]]
+        for i in range(1, len(conversations)):
+            current_time = datetime.fromisoformat(conversations[i - 1].created_at)
+            prev_time = datetime.fromisoformat(conversations[i].created_at)
+            if current_time - prev_time > gap:
+                break
+            session.append(conversations[i])
+
+        session.reverse()  # 시간순 정렬
+        return session
+
     # ─── 유저 팩트 ───────────────────────────────────────────
 
     async def learn_fact(

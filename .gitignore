@@ -138,6 +138,8 @@ celerybeat.pid
 .env
 .envrc
 secrets.yaml
+data/credentials/
+data/memory.db
 .venv
 env/
 venv/
