@@ -10,7 +10,6 @@ import logging
 from typing import Optional
 
 import discord
-import yaml
 from discord.ext import commands, tasks
 
 from core.config_loader import load_default_config, get_bot_names, get_discord_token
@@ -41,20 +40,25 @@ class GireyBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True  # 메시지 내용 접근 권한
         intents.reactions = True        # 리액션 이벤트 감지 권한
+        intents.voice_states = True     # 음성 채널 상태 접근 권한
 
         kwargs["command_prefix"] = "!"
         kwargs["intents"] = intents
         if "description" not in kwargs:
-            kwargs["description"] = "기리봇 — Discord 서버 운영 지원 봇"
+            bot_name = self.config.get("bot", {}).get("name", "기리봇")
+            kwargs["description"] = f"{bot_name} — Discord 서버 운영 지원 봇"
             
         super().__init__(*args, **kwargs)
 
-        # 2. 컴포넌트 초기화
+        # 2. 봇 이름 (secrets.yaml → bot.name)
+        self.bot_name: str = self.config.get("bot", {}).get("name", "기리봇")
+
+        # 3. 컴포넌트 초기화
         self.llm_client: BaseLLMClient = create_llm_client(self.config)
         self.memory: MemoryManager = MemoryManager(self.config)
         self.call_detector: Optional[CallDetector] = None
 
-        # 3. 스킬 시스템 초기화
+        # 4. 스킬 시스템 초기화
         self.skill_loader: SkillLoader = SkillLoader(self.config)
         self.skill_router: Optional[SkillRouter] = None
         self.skill_executor: SkillExecutor = SkillExecutor(self.llm_client)
@@ -81,6 +85,7 @@ class GireyBot(commands.Bot):
         initial_extensions = [
             "core.cogs.general",
             "core.cogs.skill_commands",
+            "core.cogs.voice",
         ]
         
         for extension in initial_extensions:
@@ -398,7 +403,7 @@ class GireyBot(commands.Bot):
 
             persona = self.memory.load_persona()
             system_prompt = persona or (
-                "당신은 Discord 서버 지원 봇 '기리봇'입니다. "
+                f"당신은 Discord 서버 지원 봇 '{self.bot_name}'입니다. "
                 "사용자의 요청에 친절하고 간결하게 답변하세요. "
             )
 
@@ -422,7 +427,7 @@ class GireyBot(commands.Bot):
         else:
             reason = llm_response.reason or "알 수 없는 오류"
             embed = discord.Embed(
-                title="🤖 기리봇 — 오류",
+                title=f"🤖 {self.bot_name} — 오류",
                 description=f"응답 생성에 실패했습니다.\n`{reason}`",
                 color=discord.Color.red(),
             )
@@ -469,7 +474,7 @@ class GireyBot(commands.Bot):
     async def _send_unavailable_message(self, message: discord.Message, result: CallDetectionResult):
         """LLM 연동이 불가능할 경우 보여주는 오류/안내 임베드 포맷 전송"""
         embed = discord.Embed(
-            title="🤖 기리봇 — 호출 감지됨",
+            title=f"🤖 {self.bot_name} — 호출 감지됨",
             description="호출이 감지되었지만, AI 엔진이 아직 준비되지 않았습니다.",
             color=discord.Color.orange(),
         )

@@ -37,7 +37,7 @@ class GeneralCog(commands.Cog, name="general"):
         stats = await memory.get_stats()
         
         embed = discord.Embed(
-            title="🧠 기리봇 — 메모리 통계",
+            title=f"🧠 {self.bot.bot_name} — 메모리 통계",
             color=discord.Color.blue(),
         )
         embed.add_field(name="💬 대화 기록", value=f"{stats.get('conversations', 0)}개", inline=True)
