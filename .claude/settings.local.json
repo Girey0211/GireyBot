@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/workplace/girey-bot -type d -not -path */.* -not -path */__pycache__ -not -path */.venv)"
+    ]
+  }
+}

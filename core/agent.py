@@ -131,6 +131,17 @@ class GireyBot(commands.Bot):
             f"{message.author.display_name}: {message.content[:100]}"
         )
 
+        # ── 모든 메시지 저장 ──
+        if message.content.strip():
+            await self.memory.save_message(
+                guild_id=message.guild.id,
+                channel_id=message.channel.id,
+                user_id=message.author.id,
+                user_name=message.author.display_name,
+                content=message.content,
+                channel_name=getattr(message.channel, "name", ""),
+            )
+
         # ── 감지 및 반응 파이프라인 ──
         if self.call_detector:
             result = await self.call_detector.detect(message)
@@ -219,6 +230,7 @@ class GireyBot(commands.Bot):
                     guild_id=message.guild.id,
                     channel_id=message.channel.id,
                     user_id=message.author.id,
+                    user_message=message.content,
                 )
 
             result_text = await self.skill_executor.execute(
@@ -399,6 +411,7 @@ class GireyBot(commands.Bot):
                 guild_id=message.guild.id,
                 channel_id=message.channel.id,
                 user_id=message.author.id,
+                user_message=message.content,
             )
 
             persona = self.memory.load_persona()

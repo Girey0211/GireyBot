@@ -7,6 +7,7 @@ LLM에 전달할 컨텍스트를 빌드합니다.
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import aiosqlite
 
 from core.memory.models import (
     KST,
+    Message,
     Conversation,
     Summary,
     ImportantEvent,
@@ -84,6 +86,68 @@ class MemoryManager:
             logger.warning(f"페르소나 파일 없음: {self.persona_path}")
 
         return self._persona_cache
+
+    # ─── 일반 메시지 저장 / 조회 ─────────────────────────────
+
+    async def save_message(
+        self,
+        guild_id: int,
+        channel_id: int,
+        user_id: int,
+        user_name: str,
+        content: str,
+        channel_name: str = "",
+    ) -> int:
+        """서버 내 일반 메시지를 저장합니다."""
+        now = datetime.now(KST).isoformat()
+        async with self._db.execute(
+            """
+            INSERT INTO messages
+                (guild_id, channel_id, channel_name, user_id, user_name, content, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (guild_id, channel_id, channel_name, user_id, user_name, content, now),
+        ) as cursor:
+            await self._db.commit()
+            return cursor.lastrowid
+
+    async def get_messages_by_channel(
+        self,
+        channel_id: int,
+        limit: int = 30,
+    ) -> list[Message]:
+        """채널의 최근 메시지를 조회합니다."""
+        async with self._db.execute(
+            """
+            SELECT * FROM messages
+            WHERE channel_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (channel_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [Message(**dict(r)) for r in reversed(rows)]
+
+    async def get_messages_by_date(
+        self,
+        channel_id: int,
+        date_start: str,
+        date_end: str,
+        limit: int = 100,
+    ) -> list[Message]:
+        """채널의 날짜 범위 메시지를 조회합니다."""
+        async with self._db.execute(
+            """
+            SELECT * FROM messages
+            WHERE channel_id = ? AND created_at >= ? AND created_at < ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (channel_id, date_start, date_end, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [Message(**dict(r)) for r in rows]
 
     # ─── 대화 저장 / 조회 ────────────────────────────────────
 
@@ -176,6 +240,45 @@ class MemoryManager:
 
         session.reverse()  # 시간순 정렬
         return session
+
+    async def get_conversations_by_date(
+        self,
+        guild_id: int,
+        date_start: str,
+        date_end: str,
+        channel_id: int | None = None,
+        limit: int = 50,
+    ) -> list[Conversation]:
+        """날짜 범위로 대화 기록을 조회합니다.
+
+        Args:
+            guild_id: 서버 ID
+            date_start: 시작 날짜 (ISO format, 예: '2026-03-19T00:00:00')
+            date_end: 종료 날짜 (ISO format, 예: '2026-03-20T00:00:00')
+            channel_id: 특정 채널만 조회 (None이면 서버 전체)
+            limit: 최대 조회 개수
+        """
+        if channel_id:
+            query = """
+                SELECT * FROM conversations
+                WHERE guild_id = ? AND channel_id = ?
+                  AND created_at >= ? AND created_at < ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            """
+            params = (guild_id, channel_id, date_start, date_end, limit)
+        else:
+            query = """
+                SELECT * FROM conversations
+                WHERE guild_id = ? AND created_at >= ? AND created_at < ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            """
+            params = (guild_id, date_start, date_end, limit)
+
+        async with self._db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return [Conversation(**dict(r)) for r in rows]
 
     # ─── 유저 팩트 ───────────────────────────────────────────
 
@@ -296,19 +399,19 @@ class MemoryManager:
 
     async def get_summaries(
         self,
-        channel_id: int,
+        guild_id: int,
         limit: int | None = None,
     ) -> list[Summary]:
-        """채널의 대화 요약을 조회합니다."""
+        """서버의 대화 요약을 조회합니다."""
         limit = limit or self.max_summaries
         async with self._db.execute(
             """
             SELECT * FROM summaries
-            WHERE channel_id = ?
+            WHERE guild_id = ?
             ORDER BY period_end DESC
             LIMIT ?
             """,
-            (channel_id, limit),
+            (guild_id, limit),
         ) as cursor:
             rows = await cursor.fetchall()
             return [Summary(**dict(r)) for r in reversed(rows)]
@@ -320,6 +423,7 @@ class MemoryManager:
         guild_id: int,
         channel_id: int,
         user_id: int,
+        user_message: str = "",
     ) -> str:
         """LLM에 전달할 메모리 컨텍스트를 조립합니다."""
         parts: list[str] = []
@@ -346,8 +450,8 @@ class MemoryManager:
             )
             parts.append(f"## 서버에서 있었던 중요한 사건\n{event_lines}")
 
-        # 3. 최근 요약
-        summaries = await self.get_summaries(channel_id)
+        # 3. 최근 요약 (서버 단위)
+        summaries = await self.get_summaries(guild_id)
         if summaries:
             summary_lines = "\n".join(
                 f"- ({s.period_start[:10]}~{s.period_end[:10]}) {s.summary}"
@@ -355,19 +459,88 @@ class MemoryManager:
             )
             parts.append(f"## 이전 대화 요약\n{summary_lines}")
 
-        # 4. 최근 대화 기록
-        history = await self.get_recent_conversations(channel_id)
-        if history:
-            history_lines = "\n".join(
-                f"- [{self._format_timestamp(h.created_at)}] {h.user_name}: {h.user_message}\n  봇: {h.bot_response}"
-                for h in history
+        # 4. 이 채널의 최근 메시지
+        messages = await self.get_messages_by_channel(channel_id)
+        if messages:
+            msg_lines = "\n".join(
+                f"- [{self._format_timestamp(m.created_at)}] {m.user_name}: {m.content}"
+                for m in messages
             )
-            parts.append(f"## 최근 대화 기록\n{history_lines}")
+            parts.append(f"## 이 채널의 최근 대화\n{msg_lines}")
+
+        # 5. 날짜 기반 대화 조회 (유저가 과거 대화를 물어볼 때)
+        if user_message:
+            date_range = self._parse_date_reference(user_message, now)
+            if date_range:
+                date_start, date_end, label = date_range
+                dated_messages = await self.get_messages_by_date(
+                    channel_id=channel_id,
+                    date_start=date_start.isoformat(),
+                    date_end=date_end.isoformat(),
+                )
+                if dated_messages:
+                    dated_lines = "\n".join(
+                        f"- [{m.created_at[:16]}] {m.user_name}: {m.content}"
+                        for m in dated_messages
+                    )
+                    parts.append(
+                        f"## {label} 대화 기록 ({date_start.strftime('%m/%d')}~{date_end.strftime('%m/%d')}, "
+                        f"총 {len(dated_messages)}건)\n{dated_lines}"
+                    )
+                else:
+                    parts.append(f"## {label} 대화 기록\n- 해당 기간에 저장된 대화가 없습니다.")
 
         if not parts:
             return ""
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _parse_date_reference(
+        message: str,
+        now: datetime,
+    ) -> tuple[datetime, datetime, str] | None:
+        """유저 메시지에서 날짜 참조를 파싱합니다.
+
+        Returns:
+            (date_start, date_end, label) 또는 None
+        """
+        # "N일 전" 패턴
+        match = re.search(r"(\d+)\s*일\s*전", message)
+        if match:
+            days_ago = int(match.group(1))
+            target = now - timedelta(days=days_ago)
+            start = target.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            return start, end, f"{days_ago}일 전"
+
+        # 키워드 매칭
+        date_keywords = {
+            "어제": 1,
+            "그제": 2,
+            "그저께": 2,
+            "엊그제": 2,
+            "그끄저께": 3,
+        }
+
+        # 대화/내역 관련 키워드와 함께 쓰였는지 확인
+        history_keywords = r"대화|내역|기록|히스토리|로그|말했|얘기|이야기|했던|뭐했|뭘했"
+        has_history_keyword = re.search(history_keywords, message) is not None
+
+        for keyword, days_ago in date_keywords.items():
+            if keyword in message and has_history_keyword:
+                target = now - timedelta(days=days_ago)
+                start = target.replace(hour=0, minute=0, second=0, microsecond=0)
+                end = start + timedelta(days=1)
+                return start, end, keyword
+
+        # "오늘" 대화 조회
+        if "오늘" in message and has_history_keyword:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            return start, end, "오늘"
+
+        return None
 
     # ─── 팩트 자동 추출 ─────────────────────────────────────
 
@@ -433,114 +606,104 @@ class MemoryManager:
 
     async def cleanup(self, llm_client) -> dict:
         """
-        TTL 만료 대화를 정리합니다.
+        TTL 만료 메시지를 정리합니다.
 
-        1. 만료 대화를 채널별로 그룹핑
+        1. 만료 메시지를 서버별로 그룹핑
         2. LLM으로 중요 이벤트 추출 → important_events에 영구 저장
         3. 나머지를 주제 단위로 요약 → summaries에 저장
-        4. 원본 대화 삭제
+        4. 원본 메시지 및 대화 삭제
         """
         cutoff = (
             datetime.now(KST) - timedelta(days=self.retention_days)
         ).isoformat()
 
-        stats = {"channels": 0, "deleted": 0, "events": 0, "summaries": 0}
+        stats = {"guilds": 0, "deleted": 0, "events": 0, "summaries": 0}
 
+        # 만료 메시지를 서버 단위로 조회
         async with self._db.execute(
             """
-            SELECT * FROM conversations
+            SELECT * FROM messages
             WHERE created_at < ?
-            ORDER BY channel_id, created_at
+            ORDER BY guild_id, created_at
             """,
             (cutoff,),
         ) as cursor:
             rows = await cursor.fetchall()
 
         if not rows:
-            logger.info("정리할 만료 대화 없음")
-            return stats
+            logger.info("정리할 만료 메시지 없음")
+        else:
+            # 서버 단위로 그룹핑
+            guilds: dict[int, list[dict]] = {}
+            for row in rows:
+                row_dict = dict(row)
+                g_id = row_dict["guild_id"]
+                guilds.setdefault(g_id, []).append(row_dict)
 
-        channels: dict[int, list[dict]] = {}
-        for row in rows:
-            row_dict = dict(row)
-            ch_id = row_dict["channel_id"]
-            channels.setdefault(ch_id, []).append(row_dict)
+            stats["guilds"] = len(guilds)
 
-        stats["channels"] = len(channels)
+            for guild_id, messages in guilds.items():
+                msg_count = len(messages)
 
-        for channel_id, conversations in channels.items():
-            guild_id = conversations[0]["guild_id"]
-            conv_count = len(conversations)
-
-            conv_text = "\n".join(
-                f"[{c['created_at']}] {c['user_name']}: {c['user_message']}"
-                f" (리액션: {c['reaction_count']})"
-                for c in conversations
-            )
-
-            if llm_client and llm_client.is_available:
-                await self._extract_important_events(
-                    llm_client, guild_id, channel_id, conv_text, conversations
+                msg_text = "\n".join(
+                    f"[{m['created_at']}] #{m['channel_name'] or '?'} "
+                    f"{m['user_name']}: {m['content']}"
+                    for m in messages
                 )
-                await self._summarize_conversations(
-                    llm_client, guild_id, channel_id, conv_text, conversations
+
+                if llm_client and llm_client.is_available:
+                    await self._extract_important_events_from_messages(
+                        llm_client, guild_id, msg_text, messages
+                    )
+                    await self._summarize_messages(
+                        llm_client, guild_id, msg_text, messages
+                    )
+                else:
+                    logger.warning("LLM 미사용 — 요약 없이 메시지 삭제")
+
+                msg_ids = [m["id"] for m in messages]
+                placeholders = ",".join("?" * len(msg_ids))
+                await self._db.execute(
+                    f"DELETE FROM messages WHERE id IN ({placeholders})",
+                    msg_ids,
                 )
-            else:
-                logger.warning("LLM 미사용 — 요약 없이 대화 삭제")
+                await self._db.commit()
 
-            conv_ids = [c["id"] for c in conversations]
-            placeholders = ",".join("?" * len(conv_ids))
-            await self._db.execute(
-                f"DELETE FROM conversations WHERE id IN ({placeholders})",
-                conv_ids,
-            )
-            await self._db.commit()
+                stats["deleted"] += msg_count
+                logger.info(
+                    f"서버 {guild_id} 정리 완료: {msg_count}개 메시지 삭제"
+                )
 
-            stats["deleted"] += conv_count
-            logger.info(
-                f"채널 {channel_id} 정리 완료: "
-                f"{conv_count}개 대화 삭제"
-            )
+        # 만료된 conversations 레코드도 삭제
+        await self._db.execute(
+            "DELETE FROM conversations WHERE created_at < ?",
+            (cutoff,),
+        )
+        await self._db.commit()
 
         return stats
 
-    async def _extract_important_events(
+    async def _extract_important_events_from_messages(
         self,
         llm_client,
         guild_id: int,
-        channel_id: int,
-        conv_text: str,
-        conversations: list[dict],
+        msg_text: str,
+        messages: list[dict],
     ):
-        """만료 대화에서 중요 이벤트를 추출합니다."""
-        high_reaction = [
-            c for c in conversations if c["reaction_count"] >= 3
-        ]
-        reaction_hint = ""
-        if high_reaction:
-            reaction_hint = (
-                "\n\n[참고: 리액션(반응)이 많은 메시지 — 커뮤니티 관심도 높음]\n"
-                + "\n".join(
-                    f"- {c['user_name']}: {c['user_message']} "
-                    f"(리액션 {c['reaction_count']}개)"
-                    for c in high_reaction
-                )
-            )
-
-        unique_users = set(c["user_name"] for c in conversations)
+        """만료 메시지에서 중요 이벤트를 추출합니다 (서버 단위)."""
+        unique_users = set(m["user_name"] for m in messages)
         participant_hint = (
-            f"\n\n[참고: 이 대화에 참여한 유저 수: {len(unique_users)}명 "
+            f"\n\n[참고: 참여 유저 수: {len(unique_users)}명 "
             f"({', '.join(list(unique_users)[:10])})]"
         )
 
         try:
             result = await llm_client.chat(
-                prompt=conv_text + reaction_hint + participant_hint,
+                prompt=msg_text + participant_hint,
                 system_prompt=(
-                    "아래 Discord 대화 기록을 분석하여 중요한 사건이나 이벤트를 추출하세요.\n\n"
+                    "아래 Discord 서버의 대화 기록을 분석하여 중요한 사건이나 이벤트를 추출하세요.\n\n"
                     "중요한 사건의 기준:\n"
                     "- 서버 규칙 변경, 장애 발생, 중요 결정 등 내용적으로 중요한 것\n"
-                    "- 리액션(반응)이 많이 달린 메시지의 주제 (커뮤니티 관심사)\n"
                     "- 여러 유저가 반복적으로 언급한 토픽\n\n"
                     "중요한 사건이 없으면 정확히 'NONE'이라고만 답하세요.\n"
                     "있으면 JSON 배열로 답하세요:\n"
@@ -569,7 +732,7 @@ class MemoryManager:
                 if isinstance(event, dict) and "event_title" in event:
                     await self.save_important_event(
                         guild_id=guild_id,
-                        channel_id=channel_id,
+                        channel_id=0,
                         event_title=event["event_title"],
                         description=event.get("description", ""),
                         participants=event.get("participants", []),
@@ -580,20 +743,19 @@ class MemoryManager:
         except (json.JSONDecodeError, Exception) as e:
             logger.warning(f"중요 이벤트 추출 실패: {e}")
 
-    async def _summarize_conversations(
+    async def _summarize_messages(
         self,
         llm_client,
         guild_id: int,
-        channel_id: int,
-        conv_text: str,
-        conversations: list[dict],
+        msg_text: str,
+        messages: list[dict],
     ):
-        """만료 대화를 주제 단위로 요약합니다."""
+        """만료 메시지를 서버 단위로 주제별 요약합니다."""
         try:
             result = await llm_client.chat(
-                prompt=conv_text,
+                prompt=msg_text,
                 system_prompt=(
-                    "아래 Discord 대화 기록을 이벤트/주제 단위로 간결하게 요약하세요.\n"
+                    "아래 Discord 서버의 여러 채널 대화 기록을 이벤트/주제 단위로 간결하게 요약하세요.\n"
                     "핵심 내용만 2~3문장으로 축약하세요.\n"
                     "불필요한 잡담은 제외하세요.\n"
                     "반드시 한국어로 답하세요."
@@ -603,20 +765,20 @@ class MemoryManager:
             if not result.available or not result.content:
                 return
 
-            period_start = conversations[0]["created_at"]
-            period_end = conversations[-1]["created_at"]
+            period_start = messages[0]["created_at"]
+            period_end = messages[-1]["created_at"]
 
             await self.save_summary(
                 guild_id=guild_id,
-                channel_id=channel_id,
+                channel_id=0,
                 summary=result.content.strip(),
                 period_start=period_start,
                 period_end=period_end,
-                message_count=len(conversations),
+                message_count=len(messages),
             )
 
         except Exception as e:
-            logger.warning(f"대화 요약 실패: {e}")
+            logger.warning(f"메시지 요약 실패: {e}")
 
     # ─── 유틸 ───────────────────────────────────────────────
 
@@ -638,7 +800,7 @@ class MemoryManager:
     async def get_stats(self) -> dict:
         """메모리 통계를 반환합니다."""
         stats = {}
-        for table in ("conversations", "summaries", "important_events", "user_facts"):
+        for table in ("messages", "conversations", "summaries", "important_events", "user_facts"):
             async with self._db.execute(
                 f"SELECT COUNT(*) FROM {table}"
             ) as cursor:

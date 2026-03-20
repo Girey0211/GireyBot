@@ -220,7 +220,10 @@ class CallDetector:
         # ── 2단계: 대화 연속성 체크 ──
         active_conv = self.get_active_conversation(message.channel.id)
         if active_conv is not None:
-            return await self._check_continuation(message, active_conv)
+            continuation_result = await self._check_continuation(message, active_conv)
+            if continuation_result.detected:
+                return continuation_result
+            # 맥락 불일치 시 키워드 검사 단계로 계속 진행
 
         # ── 자동 감지가 비활성화되면 여기서 중단 ──
         if not self.auto_detect_enabled:

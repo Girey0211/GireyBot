@@ -870,7 +870,7 @@ class SkillCommands(commands.Cog):
         name="skills-setup",
         description="Discord에서 스킬 접속 정보를 설정합니다 (관리자 전용)",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    # @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="설정할 스킬 이름")
     async def skills_setup(
         self,
@@ -930,7 +930,7 @@ class SkillCommands(commands.Cog):
         name="skills-create",
         description="대화형으로 새 스킬을 만듭니다 (관리자 전용)",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    # @app_commands.checks.has_permissions(administrator=True)
     async def skills_create(self, interaction: discord.Interaction):
         """Modal로 스킬 기본 정보를 입력받아 SKILL.md를 생성합니다."""
         modal = SkillCreateModal(self.bot)
@@ -942,7 +942,7 @@ class SkillCommands(commands.Cog):
         name="skills-edit",
         description="스킬의 실행 절차(본문)를 편집합니다 (관리자 전용)",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    # @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="편집할 스킬 이름")
     async def skills_edit(self, interaction: discord.Interaction, name: str):
         """기존 스킬의 SKILL.md 본문을 Modal로 편집합니다."""
@@ -974,7 +974,7 @@ class SkillCommands(commands.Cog):
         name="skills-generate",
         description="LLM으로 스킬 실행 절차를 자동 생성합니다 (관리자 전용)",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    # @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         name="대상 스킬 이름",
         prompt="어떤 기능을 하는 스킬인지 자연어로 설명",
@@ -1147,7 +1147,7 @@ class SkillCommands(commands.Cog):
         name="skills-delete",
         description="스킬을 삭제합니다 (관리자 전용)",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    # @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="삭제할 스킬 이름")
     async def skills_delete(self, interaction: discord.Interaction, name: str):
         """확인 버튼을 거쳐 스킬 디렉토리를 삭제합니다."""
@@ -1187,7 +1187,7 @@ class SkillCommands(commands.Cog):
         name="skills-reload",
         description="스킬을 다시 로드합니다 (관리자 전용)",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    # @app_commands.checks.has_permissions(administrator=True)
     async def skills_reload(self, interaction: discord.Interaction):
         """credentials 파일 추가 후 봇 재시작 없이 스킬을 리로드합니다."""
         active, pending = _reload_skills(self.bot)

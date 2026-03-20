@@ -27,6 +27,21 @@ CREATE INDEX IF NOT EXISTS idx_conv_user    ON conversations(user_id, created_at
 CREATE INDEX IF NOT EXISTS idx_conv_guild   ON conversations(guild_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_conv_guild_channel ON conversations(guild_id, channel_id, created_at);
 
+CREATE TABLE IF NOT EXISTS messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    channel_name    TEXT    NOT NULL DEFAULT '',
+    user_id         INTEGER NOT NULL,
+    user_name       TEXT    NOT NULL,
+    content         TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_msg_channel ON messages(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_msg_guild   ON messages(guild_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_msg_guild_channel ON messages(guild_id, channel_id, created_at);
+
 CREATE TABLE IF NOT EXISTS summaries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id        INTEGER NOT NULL,
@@ -39,6 +54,7 @@ CREATE TABLE IF NOT EXISTS summaries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sum_channel ON summaries(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sum_guild ON summaries(guild_id, created_at);
 
 CREATE TABLE IF NOT EXISTS important_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

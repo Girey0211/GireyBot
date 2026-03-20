@@ -9,6 +9,19 @@ KST = timezone(timedelta(hours=9))
 
 
 @dataclass
+class Message:
+    """서버 내 일반 메시지"""
+    id: int
+    guild_id: int
+    channel_id: int
+    channel_name: str
+    user_id: int
+    user_name: str
+    content: str
+    created_at: str
+
+
+@dataclass
 class Conversation:
     """대화 기록"""
     id: int

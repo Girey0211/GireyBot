@@ -63,7 +63,7 @@ class VoiceCog(commands.Cog, name="voice"):
 
         # 새로 접속
         try:
-            await channel.connect()
+            await channel.connect(self_deaf=True, reconnect=True)
         except discord.ClientException as e:
             await interaction.response.send_message(
                 f"❌ 음성 채널 접속 실패: {e}",
