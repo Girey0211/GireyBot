@@ -159,28 +159,44 @@ class GireyBot(commands.Bot):
             await self._send_unavailable_message(message, result)
             return
 
-        # ── 0단계: 스킬 관리 의도 먼저 확인 ──
-        management_intent = await self._detect_management_intent(message.content)
-        if management_intent:
-            await self._handle_skill_management(message, management_intent)
-            return
-
-        # ── 스킬 라우팅 시도 ──
-        if self.skill_router:
-            match_result = await self.skill_router.route(message.content)
-
-            if match_result.needs_clarification:
-                # 신뢰도 60 이하 → 사용자에게 재확인
-                await self._handle_skill_clarification(message, match_result)
+        thinking_msg = await message.channel.send("💭 생각중입니다...")
+        try:
+            # ── 0단계: 스킬 관리 의도 먼저 확인 ──
+            management_intent = await self._detect_management_intent(message.content)
+            if management_intent:
+                await thinking_msg.delete()
+                thinking_msg = None
+                await self._handle_skill_management(message, management_intent)
                 return
 
-            if match_result.skill is not None:
-                # 스킬 매칭 확정 → 스킬 실행
-                await self._execute_skill(message, match_result.skill)
-                return
+            # ── 스킬 라우팅 시도 ──
+            if self.skill_router:
+                match_result = await self.skill_router.route(message.content)
 
-        # ── 스킬 매칭 없음 → 기존 자유 대화 ──
-        await self._handle_free_chat(message)
+                if match_result.needs_clarification:
+                    # 신뢰도 60 이하 → 사용자에게 재확인
+                    await thinking_msg.delete()
+                    thinking_msg = None
+                    await self._handle_skill_clarification(message, match_result)
+                    return
+
+                if match_result.skill is not None:
+                    # 스킬 매칭 확정 → 스킬 실행
+                    await thinking_msg.delete()
+                    thinking_msg = None
+                    await self._execute_skill(message, match_result.skill)
+                    return
+
+            # ── 스킬 매칭 없음 → 기존 자유 대화 ──
+            await thinking_msg.delete()
+            thinking_msg = None
+            await self._handle_free_chat(message)
+        finally:
+            if thinking_msg:
+                try:
+                    await thinking_msg.delete()
+                except Exception:
+                    pass
 
     async def _handle_skill_clarification(self, message: discord.Message, match_result):
         """신뢰도 미달 시 사용자에게 스킬 선택을 요청하고, 선택 결과에 따라 실행합니다."""
