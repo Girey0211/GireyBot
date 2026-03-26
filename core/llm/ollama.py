@@ -1,10 +1,13 @@
 """
 Ollama 기반 LLM 클라이언트
 
-Ollama의 OpenAI 호환 API(/v1)를 사용하여 요청을 전송합니다.
+Ollama 네이티브 API(/api/chat)를 사용하여 요청을 전송합니다.
+think=False 를 페이로드에 직접 포함하여 Qwen3 계열의 think 모드를 비활성화합니다.
 """
 
 import logging
+
+import aiohttp
 
 from core.llm.base import BaseLLMClient, LLMResponse
 
@@ -14,36 +17,32 @@ DEFAULT_HOST = "http://localhost:11434"
 
 
 class OllamaClient(BaseLLMClient):
-    """Ollama 기반 LLM 클라이언트"""
+    """Ollama 네이티브 API 기반 LLM 클라이언트"""
 
     def __init__(self, model: str = "llama3", host: str | None = None):
         super().__init__(model)
         self.host = host or DEFAULT_HOST
-        self._client = None
-        self._init_client()
+        self._api_url = f"{self.host}/api/chat"
+        self._available = True
+        logger.info(f"OllamaClient 초기화 완료 — model={self.model}, host={self.host}")
 
-    def _init_client(self):
-        """Ollama OpenAI 호환 클라이언트를 초기화합니다."""
-        try:
-            from openai import AsyncOpenAI
-
-            self._client = AsyncOpenAI(
-                base_url=f"{self.host}/v1",
-                api_key="ollama",  # Ollama는 API 키 불필요, 더미값 사용
-            )
-            self._available = True
-            logger.info(
-                f"OllamaClient 초기화 완료 — model={self.model}, host={self.host}"
-            )
-        except ImportError:
-            logger.error(
-                "openai 패키지가 설치되지 않았습니다. "
-                "'uv add openai' 로 설치하세요."
-            )
-            self._available = False
-        except Exception as e:
-            logger.error(f"Ollama 클라이언트 초기화 실패: {e}")
-            self._available = False
+    async def _request(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 2000) -> str:
+        """Ollama /api/chat 엔드포인트에 요청을 보내고 content를 반환합니다."""
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "think": False,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self._api_url, json=payload) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                return data["message"]["content"]
 
     async def analyze_call_intent(
         self,
@@ -51,7 +50,7 @@ class OllamaClient(BaseLLMClient):
         context: list[str] | None = None,
     ) -> LLMResponse:
         """Ollama로 메시지의 호출 의도를 분석합니다."""
-        if not self._available or not self._client:
+        if not self._available:
             return self._unavailable_response("Ollama 서버에 연결할 수 없습니다.")
 
         system_prompt = (
@@ -65,26 +64,14 @@ class OllamaClient(BaseLLMClient):
         if context:
             context_text = "\n\n[이전 대화]\n" + "\n".join(context[-5:])
 
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message_content + context_text},
+        ]
+
         try:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message_content + context_text},
-                ],
-                temperature=0.1,
-                max_tokens=200,
-                extra_body={"think": False},
-            )
-
-            content = response.choices[0].message.content or ""
-
-            return LLMResponse(
-                available=True,
-                content=content,
-                raw={"usage": response.usage.model_dump() if response.usage else None},
-            )
-
+            content = await self._request(messages, temperature=0.1, max_tokens=200)
+            return LLMResponse(available=True, content=content)
         except Exception as e:
             logger.error(f"[Ollama] 호출 의도 분석 실패: {e}")
             return self._unavailable_response(f"Ollama API 호출 실패: {e}")
@@ -96,7 +83,7 @@ class OllamaClient(BaseLLMClient):
         bot_response: str,
     ) -> LLMResponse:
         """후속 메시지가 이전 대화의 연속인지 Ollama로 판단합니다."""
-        if not self._available or not self._client:
+        if not self._available:
             return self._unavailable_response("Ollama 서버에 연결할 수 없습니다.")
 
         system_prompt = (
@@ -122,26 +109,14 @@ class OllamaClient(BaseLLMClient):
             f"[새 메시지]\n{new_message}"
         )
 
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
         try:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=200,
-                extra_body={"think": False},
-            )
-
-            content = response.choices[0].message.content or ""
-
-            return LLMResponse(
-                available=True,
-                content=content,
-                raw={"usage": response.usage.model_dump() if response.usage else None},
-            )
-
+            content = await self._request(messages, temperature=0.1, max_tokens=200)
+            return LLMResponse(available=True, content=content)
         except Exception as e:
             logger.error(f"[Ollama] 대화 연속성 분석 실패: {e}")
             return self._unavailable_response(f"Ollama API 호출 실패: {e}")
@@ -153,7 +128,7 @@ class OllamaClient(BaseLLMClient):
         context: str | None = None,
     ) -> LLMResponse:
         """Ollama로 채팅 요청을 처리합니다."""
-        if not self._available or not self._client:
+        if not self._available:
             return self._unavailable_response("Ollama 서버에 연결할 수 없습니다.")
 
         messages = []
@@ -164,22 +139,8 @@ class OllamaClient(BaseLLMClient):
         messages.append({"role": "user", "content": prompt})
 
         try:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=2000,
-                extra_body={"think": False},
-            )
-
-            content = response.choices[0].message.content or ""
-
-            return LLMResponse(
-                available=True,
-                content=content,
-                raw={"usage": response.usage.model_dump() if response.usage else None},
-            )
-
+            content = await self._request(messages, temperature=0.7, max_tokens=2000)
+            return LLMResponse(available=True, content=content)
         except Exception as e:
             logger.error(f"[Ollama] 채팅 요청 실패: {e}")
             return self._unavailable_response(f"Ollama API 호출 실패: {e}")

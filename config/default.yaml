@@ -29,3 +29,17 @@ response:
   language: "auto"                # 응답 언어 (auto = 요청 언어 따라감)
   max_length: 2000                # Discord 메시지 길이 제한
   use_embed: true                 # Embed 형식 사용 여부
+
+# ─── 유저 피드백 설정 ──────────────────────────────────────────
+feedback:
+  enabled: true                   # 피드백 기능 활성화 여부
+  # 위반 유형별 점수 (값이 클수록 심각)
+  scores:
+    obscene: 30                   # 음란·성적 내용
+    political: 20                 # 정치적 편향 유도
+    unreasonable: 15              # 무리한·악의적 요청
+  # 응답 모드 전환 임계값 (누적 점수 기준)
+  thresholds:
+    cold: 30                      # 이상: 냉담한 응답
+    hostile: 60                   # 이상: 매우 부정적 응답
+    refuse: 90                    # 이상: 응답 거부

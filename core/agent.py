@@ -5,8 +5,8 @@
 """
 
 import asyncio
-import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 import discord
@@ -14,6 +14,7 @@ from discord.ext import commands, tasks
 
 from core.config_loader import load_default_config, get_bot_names, get_discord_token
 from core.detection import CallDetector, CallDetectionResult
+from core.feedback import FeedbackManager, check_content
 from core.llm import create_llm_client, BaseLLMClient
 from core.memory import MemoryManager
 from core.skills.loader import SkillLoader
@@ -57,6 +58,14 @@ class GireyBot(commands.Bot):
         self.llm_client: BaseLLMClient = create_llm_client(self.config)
         self.memory: MemoryManager = MemoryManager(self.config)
         self.call_detector: Optional[CallDetector] = None
+
+        # 유저 피드백 관리자
+        mem_config = self.config.get("memory", {})
+        _db_path = str(
+            Path(__file__).resolve().parent.parent
+            / mem_config.get("db_path", "data/memory.db")
+        )
+        self.feedback: FeedbackManager = FeedbackManager(_db_path)
 
         # 4. 스킬 시스템 초기화
         self.skill_loader: SkillLoader = SkillLoader(self.config)
@@ -158,6 +167,23 @@ class GireyBot(commands.Bot):
         if llm_unavailable:
             await self._send_unavailable_message(message, result)
             return
+
+        # ── 피드백: 콘텐츠 검사 ──
+        if self.config.get("feedback", {}).get("enabled", True):
+            check = await check_content(self.llm_client, message.content)
+            if check.violation:
+                new_score = await self.feedback.add_violation(
+                    user_id=message.author.id,
+                    guild_id=message.guild.id,
+                    violation_type=check.violation_type,
+                    score_delta=check.score_delta,
+                )
+                logger.info(
+                    f"콘텐츠 위반 처리 — user={message.author.id} "
+                    f"type={check.violation_type} score={new_score}"
+                )
+                await self._send_violation_reply(message, check.violation_type)
+                return
 
         thinking_msg = await message.channel.send("💭 생각중입니다...")
         try:
@@ -277,33 +303,7 @@ class GireyBot(commands.Bot):
         Returns:
             "create" | "delete" | "edit" | "list" | "reload" | None
         """
-        from pathlib import Path
-        import json, re
-
-        # ── LLM 기반 판별 ──
-        if self.llm_client and self.llm_client.is_available:
-            prompt_path = Path(__file__).parent / "skills" / "prompts" / "management_intent.txt"
-            try:
-                sys_prompt = prompt_path.read_text(encoding="utf-8")
-                response = await self.llm_client.chat(
-                    prompt=content,
-                    system_prompt=sys_prompt,
-                )
-                if response.available and response.content:
-                    raw = response.content.strip()
-                    raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
-                    raw = re.sub(r"\n?```\s*$", "", raw)
-                    m = re.search(r"\{.*\}", raw, re.DOTALL)
-                    if m:
-                        data = json.loads(m.group())
-                        intent = data.get("intent", "null")
-                        if intent and intent != "null":
-                            logger.info(f"관리 의도 감지 (LLM): {intent}")
-                            return intent
-            except Exception as e:
-                logger.warning(f"관리 의도 LLM 판별 실패, 키워드 폴백: {e}")
-
-        # ── 키워드 기반 폴백 ──
+        # ── 키워드 기반 판별 ──
         content_lower = content.lower()
         _KW_CREATE = ("스킬 만들", "스킬 생성", "스킬 추가", "새 스킬", "새로운 스킬")
         _KW_DELETE = ("스킬 삭제", "스킬 지워", "스킬 제거")
@@ -423,6 +423,12 @@ class GireyBot(commands.Bot):
     async def _handle_free_chat(self, message: discord.Message):
         """스킬 매칭이 없을 때 기존 자유 대화 로직을 수행합니다."""
         async with message.channel.typing():
+            # 유저 모드 확인 (refuse면 응답 거부)
+            user_mode = await self.feedback.get_response_mode(message.author.id)
+            if user_mode == "refuse":
+                await self._send_refuse_reply(message)
+                return
+
             context = await self.memory.build_context(
                 guild_id=message.guild.id,
                 channel_id=message.channel.id,
@@ -435,6 +441,9 @@ class GireyBot(commands.Bot):
                 f"당신은 Discord 서버 지원 봇 '{self.bot_name}'입니다. "
                 "사용자의 요청에 친절하고 간결하게 답변하세요. "
             )
+            # 유저 모드 태그를 시스템 프롬프트에 주입
+            if user_mode != "normal":
+                system_prompt = f"[USER_MODE: {user_mode}]\n\n{system_prompt}"
 
             llm_response = await self.llm_client.chat(
                 prompt=message.content,
@@ -499,6 +508,63 @@ class GireyBot(commands.Bot):
                 source_message_id=message.id,
             )
         )
+
+    async def _send_violation_reply(self, message: discord.Message, violation_type: str):
+        """콘텐츠 위반 감지 시 거절 메시지를 전송합니다."""
+        _VIOLATION_LABELS = {
+            "obscene":      "음란·성적 내용",
+            "political":    "정치적 편향 유도",
+            "unreasonable": "무리한·악의적 요청",
+        }
+        label = _VIOLATION_LABELS.get(violation_type, "부적절한 내용")
+        tag = f"[CONTENT_VIOLATION: {violation_type}]"
+
+        persona = self.memory.load_persona()
+        system_prompt = persona or f"당신은 Discord 봇 '{self.bot_name}'입니다."
+        system_prompt = f"{tag}\n\n{system_prompt}"
+
+        try:
+            llm_response = await self.llm_client.chat(
+                prompt=message.content,
+                system_prompt=system_prompt,
+            )
+            if llm_response.available and llm_response.content:
+                await message.reply(llm_response.content, mention_author=False)
+                return
+        except Exception:
+            pass
+
+        # LLM 실패 시 기본 거절 메시지
+        embed = discord.Embed(
+            title="⚠️ 응답 거절",
+            description=f"이 질문은 **{label}**으로 판단되어 응답이 거절되었습니다.",
+            color=discord.Color.red(),
+        )
+        await message.reply(embed=embed, mention_author=False)
+
+    async def _send_refuse_reply(self, message: discord.Message):
+        """누적 점수 초과 유저에게 응답 거부 메시지를 전송합니다."""
+        persona = self.memory.load_persona()
+        system_prompt = persona or f"당신은 Discord 봇 '{self.bot_name}'입니다."
+        system_prompt = f"[USER_MODE: refuse]\n\n{system_prompt}"
+
+        try:
+            llm_response = await self.llm_client.chat(
+                prompt=message.content,
+                system_prompt=system_prompt,
+            )
+            if llm_response.available and llm_response.content:
+                await message.reply(llm_response.content, mention_author=False)
+                return
+        except Exception:
+            pass
+
+        embed = discord.Embed(
+            title="🚫 응답 거부",
+            description="누적된 위반으로 인해 이 사용자에게는 응답하지 않습니다.",
+            color=discord.Color.dark_red(),
+        )
+        await message.reply(embed=embed, mention_author=False)
 
     async def _send_unavailable_message(self, message: discord.Message, result: CallDetectionResult):
         """LLM 연동이 불가능할 경우 보여주는 오류/안내 임베드 포맷 전송"""

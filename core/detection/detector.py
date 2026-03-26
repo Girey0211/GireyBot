@@ -245,35 +245,11 @@ class CallDetector:
             f"author={message.author.display_name}"
         )
 
-        # ── 4단계: 2차 LLM 맥락 분석 ──
-        if self.llm_client and self.llm_client.is_available:
-            llm_result = await self.llm_client.analyze_call_intent(content)
-
-            if llm_result.available:
-                return CallDetectionResult(
-                    detected=True,
-                    trigger_type="auto_detect",
-                    matched_keyword=matched_keyword,
-                    confidence=0.8,
-                    llm_response=llm_result,
-                )
-            else:
-                return CallDetectionResult(
-                    detected=False,
-                    trigger_type=None,
-                    matched_keyword=matched_keyword,
-                    confidence=0.0,
-                    llm_response=llm_result,
-                )
-        else:
-            llm_result = None
-            if self.llm_client:
-                llm_result = await self.llm_client.analyze_call_intent(content)
-
-            return CallDetectionResult(
-                detected=True,
-                trigger_type="keyword",
-                matched_keyword=matched_keyword,
-                confidence=0.7,
-                llm_response=llm_result,
-            )
+        # ── 4단계: 키워드 매칭 확정 ──
+        # 키워드가 이미 매칭됐으므로 추가 LLM 분석 없이 호출로 확정
+        return CallDetectionResult(
+            detected=True,
+            trigger_type="keyword",
+            matched_keyword=matched_keyword,
+            confidence=0.7,
+        )

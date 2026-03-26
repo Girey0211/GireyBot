@@ -81,6 +81,21 @@ CREATE TABLE IF NOT EXISTS user_facts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_facts_user ON user_facts(user_id);
+
+CREATE TABLE IF NOT EXISTS user_feedback (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL UNIQUE,
+    guild_id            INTEGER NOT NULL,
+    score               INTEGER DEFAULT 0,
+    violation_count     INTEGER DEFAULT 0,
+    last_violation_type TEXT    DEFAULT NULL,
+    last_violation_at   TEXT    DEFAULT NULL,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON user_feedback(user_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_guild ON user_feedback(guild_id, score);
 """
 
 

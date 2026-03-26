@@ -64,6 +64,20 @@ class ImportantEvent:
 
 
 @dataclass
+class UserFeedback:
+    """유저 피드백 점수 및 위반 기록"""
+    id: int
+    user_id: int
+    guild_id: int
+    score: int               # 누적 부정 점수
+    violation_count: int
+    last_violation_type: str | None  # "obscene" | "political" | "unreasonable"
+    last_violation_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class UserFact:
     """유저별 학습된 사실"""
     id: int
