@@ -13,26 +13,17 @@ logger = logging.getLogger("girey-bot.feedback")
 
 # 위반 유형별 기본 점수
 VIOLATION_SCORES: dict[str, int] = {
-    "obscene": 30,       # 음란·성적 내용
-    "political": 20,     # 정치적 편향 유도
-    "unreasonable": 15,  # 무리한·악의적 요청
+    "obscene": 15,       # 음란·성적 내용
+    "political": 10,     # 정치적 편향 유도
+    "unreasonable": 8,  # 무리한·악의적 요청
 }
 
-_SYSTEM_PROMPT = """당신은 Discord 메시지의 부적절한 내용을 감지하는 검열 시스템입니다.
-다음 세 가지 위반 유형을 판별하세요:
-
-1. **obscene** — 음란하거나 성적인 내용, 성희롱, 포르노 관련 내용
-2. **political** — 특정 정치인/정당 지지·비하, 정치적 편향 유도, 선동
-3. **unreasonable** — 봇이 불법 행위를 돕도록 요청, 개인정보 침해 유도, 악의적이거나 명백히 무리한 요청
-
-다음 JSON만 출력하세요 (다른 텍스트 없이):
-{
-  "violation": true 또는 false,
-  "type": "obscene" | "political" | "unreasonable" | "none",
-  "reason": "한 줄 이유 (영어 또는 한국어)"
-}
-
-일반적인 대화, 서버 관리 질문, 기술 질문은 위반이 아닙니다. 판단이 애매하면 false로 처리하세요."""
+_SYSTEM_PROMPT = (
+    "Discord 메시지의 위반 여부를 판별하세요.\n"
+    "위반 유형: obscene(음란·성적), political(정치편향·선동), unreasonable(불법·악의적 요청)\n"
+    "일반 대화·기술 질문은 위반 아님. 애매하면 false.\n"
+    'JSON만 출력: {"violation": true/false, "type": "obscene|political|unreasonable|none"}'
+)
 
 
 @dataclass
@@ -66,17 +57,16 @@ async def check_content(llm_client, message: str) -> ContentCheckResult:
         data = json.loads(m.group())
         violation = bool(data.get("violation", False))
         vtype = data.get("type", "none") if violation else "none"
-        reason = data.get("reason", "")
         score_delta = VIOLATION_SCORES.get(vtype, 0) if violation else 0
 
         if violation:
-            logger.info(f"콘텐츠 위반 감지 — type={vtype} score={score_delta} reason={reason}")
+            logger.info(f"콘텐츠 위반 감지 — type={vtype} score={score_delta}")
 
         return ContentCheckResult(
             violation=violation,
             violation_type=vtype,
             score_delta=score_delta,
-            reason=reason,
+            reason=vtype,
         )
 
     except Exception as e:

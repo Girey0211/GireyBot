@@ -278,8 +278,7 @@ class SkillRouter:
         skill_entries = []
         for s in auto_skills:
             triggers_str = ", ".join(s.triggers[:8]) if s.triggers else "(없음)"
-            # body에서 첫 500자만 (LLM 토큰 절약)
-            body_summary = s.body[:500] if s.body else ""
+            body_summary = s.body[:150] if s.body else ""
             skill_entries.append(
                 f"### {s.name}\n"
                 f"- 설명: {s.description}\n"

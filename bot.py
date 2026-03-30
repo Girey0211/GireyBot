@@ -6,9 +6,13 @@ import logging
 import os
 
 from core.logging import setup_logging
+from core.config_loader import load_default_config
 from core.agent import GireyBot
 
-setup_logging()
+_config = load_default_config()
+_log_level_str = _config.get("bot", {}).get("log_level", "INFO").upper()
+_log_level = getattr(logging, _log_level_str, logging.INFO)
+setup_logging(level=_log_level)
 logger = logging.getLogger("girey-bot")
 
 

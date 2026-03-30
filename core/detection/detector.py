@@ -141,7 +141,6 @@ class CallDetector:
 
         llm_result = await self.llm_client.analyze_continuation(
             new_message=message.content,
-            previous_user_message=active_conv.last_user_message,
             bot_response=active_conv.last_bot_response,
         )
 

@@ -47,7 +47,6 @@ class BaseLLMClient(ABC):
     async def analyze_continuation(
         self,
         new_message: str,
-        previous_user_message: str,
         bot_response: str,
     ) -> LLMResponse:
         """후속 메시지가 이전 대화의 연속인지 판단합니다."""

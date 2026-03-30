@@ -17,10 +17,12 @@ mcp_servers: []                   # 사용 가능한 MCP 서버 목록
 memory:
   db_path: "data/memory.db"         # SQLite DB 경로
   persona_path: "data/persona.md"   # 봇 페르소나 파일 경로
-  max_history: 10                   # 컨텍스트에 포함할 최근 대화 수
-  max_facts: 20                     # 컨텍스트에 포함할 최대 팩트 수
-  max_summaries: 5                  # 컨텍스트에 포함할 최대 요약 수
-  auto_extract_facts: true          # 대화에서 자동으로 사실 추출 여부
+  max_history: 3                    # 컨텍스트에 포함할 최근 대화 수
+  max_messages: 10                  # 컨텍스트에 포함할 최근 채널 메시지 수
+  max_facts: 5                      # 컨텍스트에 포함할 최대 팩트 수
+  max_summaries: 2                  # 컨텍스트에 포함할 최대 요약 수
+  max_events: 3                     # 컨텍스트에 포함할 최대 중요 이벤트 수
+  auto_extract_facts: false         # 대화에서 자동으로 사실 추출 여부 (4B 모델: false 권장)
   retention_days: 7                 # 대화 기록 보존 기한 (일)
   cleanup_interval_hours: 24        # 자동 정리 주기 (시간)
 

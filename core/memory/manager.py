@@ -41,9 +41,11 @@ class MemoryManager:
         mem_config = config.get("memory", {})
         self.db_path = BASE_DIR / mem_config.get("db_path", "data/memory.db")
         self.persona_path = BASE_DIR / mem_config.get("persona_path", "data/persona.md")
-        self.max_history = mem_config.get("max_history", 10)
-        self.max_facts = mem_config.get("max_facts", 20)
-        self.max_summaries = mem_config.get("max_summaries", 5)
+        self.max_history = mem_config.get("max_history", 3)
+        self.max_messages = mem_config.get("max_messages", 10)
+        self.max_facts = mem_config.get("max_facts", 5)
+        self.max_summaries = mem_config.get("max_summaries", 2)
+        self.max_events = mem_config.get("max_events", 3)
         self.auto_extract_facts = mem_config.get("auto_extract_facts", True)
         self.retention_days = mem_config.get("retention_days", 7)
         self.cleanup_interval_hours = mem_config.get("cleanup_interval_hours", 24)
@@ -428,6 +430,9 @@ class MemoryManager:
         """LLM에 전달할 메모리 컨텍스트를 조립합니다."""
         parts: list[str] = []
 
+        # 유저 메시지에서 관련성 판단용 키워드 추출
+        keywords = self._extract_keywords(user_message) if user_message else []
+
         # 0. 현재 시각 기준 정보
         now = datetime.now(KST)
         parts.append(
@@ -435,32 +440,46 @@ class MemoryManager:
             f"- {now.strftime('%Y년 %m월 %d일 %A %H:%M')} (KST)"
         )
 
-        # 1. 유저 팩트
+        # 1. 유저 팩트 — 유저 메시지와 관련 있는 것만 포함
         facts = await self.get_user_facts(user_id)
         if facts:
-            fact_lines = "\n".join(f"- {f.fact}" for f in facts)
-            parts.append(f"## 이 유저에 대해 기억하고 있는 것\n{fact_lines}")
+            relevant_facts = [f for f in facts if self._is_relevant(f.fact, keywords)]
+            if relevant_facts:
+                fact_lines = "\n".join(f"- {f.fact}" for f in relevant_facts)
+                parts.append(f"## 이 유저에 대해 기억하고 있는 것\n{fact_lines}")
+                logger.debug(f"팩트 필터: {len(relevant_facts)}/{len(facts)}개 포함")
 
-        # 2. 중요 이벤트
-        events = await self.get_important_events(guild_id, limit=5)
+        # 2. 중요 이벤트 — 유저 메시지와 관련 있는 것만 포함
+        events = await self.get_important_events(guild_id, limit=self.max_events)
         if events:
-            event_lines = "\n".join(
-                f"- [{e.importance}] {e.event_title}: {e.description}"
-                for e in events
-            )
-            parts.append(f"## 서버에서 있었던 중요한 사건\n{event_lines}")
+            relevant_events = [
+                e for e in events
+                if self._is_relevant(f"{e.event_title} {e.description}", keywords)
+            ]
+            if relevant_events:
+                event_lines = "\n".join(
+                    f"- [{e.importance}] {e.event_title}: {e.description}"
+                    for e in relevant_events
+                )
+                parts.append(f"## 서버에서 있었던 중요한 사건\n{event_lines}")
+                logger.debug(f"이벤트 필터: {len(relevant_events)}/{len(events)}개 포함")
 
-        # 3. 최근 요약 (서버 단위)
+        # 3. 최근 요약 — 유저 메시지와 관련 있는 것만 포함
         summaries = await self.get_summaries(guild_id)
         if summaries:
-            summary_lines = "\n".join(
-                f"- ({s.period_start[:10]}~{s.period_end[:10]}) {s.summary}"
-                for s in summaries
-            )
-            parts.append(f"## 이전 대화 요약\n{summary_lines}")
+            relevant_summaries = [
+                s for s in summaries if self._is_relevant(s.summary, keywords)
+            ]
+            if relevant_summaries:
+                summary_lines = "\n".join(
+                    f"- ({s.period_start[:10]}~{s.period_end[:10]}) {s.summary}"
+                    for s in relevant_summaries
+                )
+                parts.append(f"## 이전 대화 요약\n{summary_lines}")
+                logger.debug(f"요약 필터: {len(relevant_summaries)}/{len(summaries)}개 포함")
 
         # 4. 이 채널의 최근 메시지
-        messages = await self.get_messages_by_channel(channel_id)
+        messages = await self.get_messages_by_channel(channel_id, limit=self.max_messages)
         if messages:
             msg_lines = "\n".join(
                 f"- [{self._format_timestamp(m.created_at)}] {m.user_name}: {m.content}"
@@ -779,6 +798,31 @@ class MemoryManager:
 
         except Exception as e:
             logger.warning(f"메시지 요약 실패: {e}")
+
+    # ─── 관련성 필터 ────────────────────────────────────────
+
+    # 조사·어미·감탄사 등 의미 없는 토큰 패턴
+    _STRIP_TAIL = re.compile(r'[이가을를은는의에도와과고~?!.,ㅋㅎㅠㅜ]+$')
+
+    @staticmethod
+    def _extract_keywords(text: str) -> list[str]:
+        """텍스트에서 의미 있는 키워드(2자 이상)를 추출합니다."""
+        keywords = []
+        for token in text.split():
+            token = MemoryManager._STRIP_TAIL.sub('', token)
+            if len(token) >= 2:
+                keywords.append(token)
+        return keywords
+
+    @staticmethod
+    def _is_relevant(item: str, keywords: list[str]) -> bool:
+        """item이 키워드 목록과 관련 있는지 판단합니다.
+
+        키워드가 없으면 항상 관련 있음(True) 반환.
+        """
+        if not keywords:
+            return True
+        return any(kw in item for kw in keywords)
 
     # ─── 유틸 ───────────────────────────────────────────────
 

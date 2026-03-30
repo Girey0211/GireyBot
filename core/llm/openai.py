@@ -109,7 +109,6 @@ class OpenAIClient(BaseLLMClient):
     async def analyze_continuation(
         self,
         new_message: str,
-        previous_user_message: str,
         bot_response: str,
     ) -> LLMResponse:
         """후속 메시지가 이전 대화의 연속인지 OpenAI로 판단합니다."""
@@ -119,24 +118,13 @@ class OpenAIClient(BaseLLMClient):
             )
 
         system_prompt = (
-            "당신은 Discord 대화 흐름 분석기입니다.\n"
-            "이전 대화(사용자 메시지 + 봇 응답)와 새 메시지를 비교하여, "
-            "새 메시지가 이전 대화의 자연스러운 연속인지 판단하세요.\n\n"
-            "다음 경우 연속 대화로 판단하세요:\n"
-            "- 이전 대화 주제에 대한 추가 질문이나 코멘트\n"
-            "- 봇의 응답에 대한 후속 요청이나 피드백\n"
-            "- 같은 맥락의 관련 질문\n\n"
-            "다음 경우 연속 대화가 아닌 것으로 판단하세요:\n"
-            "- 완전히 다른 주제의 대화\n"
-            "- 다른 사람을 부르거나 다른 사람에게 말하는 뉘앙스\n"
-            "- 봇과 무관한 일상 대화 (인사, 잡담 등)\n"
-            "- 단순 감탄사나 리액션 (ㅋㅋ, ㅎㅎ, ㄳ, ㅇㅋ 등 단독 사용)\n\n"
-            "반드시 JSON으로만 응답하세요:\n"
-            '{"is_continuation": true/false, "reason": "판단 근거"}'
+            "봇 응답에 이어 새 메시지가 왔을 때 연속 대화인지 판단하세요.\n"
+            "연속: 봇 응답에 대한 후속 질문·피드백·관련 요청\n"
+            "비연속: 전혀 다른 주제, 단순 감탄사(ㅋㅋ·ㄳ·ㅇㅋ), 다른 사람과의 대화\n"
+            'JSON만 출력: {"is_continuation": true/false}'
         )
 
         user_prompt = (
-            f"[이전 사용자 메시지]\n{previous_user_message}\n\n"
             f"[봇 응답]\n{bot_response}\n\n"
             f"[새 메시지]\n{new_message}"
         )

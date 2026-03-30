@@ -22,9 +22,9 @@ THRESHOLD_HOSTILE = 60   # 이상: 매우 부정적 응답
 THRESHOLD_REFUSE  = 90   # 이상: 응답 거부
 
 # 구간별 일(日) 감소율
-_RATE_HIGH = 30 / 7   # >90  구간
-_RATE_MID  = 30 / 5   # 60~90 구간
-_RATE_LOW  = 60 / 5   # 0~60  구간
+_RATE_HIGH = 30 / 3   # >90  구간
+_RATE_MID  = 30 / 2   # 60~90 구간
+_RATE_LOW  = 60 / 2   # 0~60  구간
 
 
 def _apply_decay(score: int, updated_at_str: str) -> int:
