@@ -8,10 +8,11 @@ from core.detection import CallDetector, CallDetectionResult
 from core.llm import (
     BaseLLMClient,
     LLMClient,
+    LLMClients,
     LLMResponse,
     OllamaClient,
     OpenAIClient,
-    create_llm_client,
+    create_llm_clients,
 )
 from core.memory import MemoryManager
 from core.agent import GireyBot
@@ -28,7 +29,8 @@ __all__ = [
     "LLMResponse",
     "OllamaClient",
     "OpenAIClient",
-    "create_llm_client",
+    "LLMClients",
+    "create_llm_clients",
     "MemoryManager",
     "GireyBot",
 ]

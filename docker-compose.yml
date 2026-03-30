@@ -1,0 +1,9 @@
+services:
+  girey-bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./secrets.yaml:/app/secrets.yaml:ro
+      - ./data/memory.db:/app/data/memory.db
+      - ./data/persona.md:/app/data/persona.md:ro
+      - ./skills:/app/skills

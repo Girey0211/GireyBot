@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.git/
+.claude/
+secrets.yaml
+data/
+plan/
+*.md
+!skills/*/SKILL.md
+!data/persona.md

@@ -15,7 +15,7 @@ from discord.ext import commands, tasks
 from core.config_loader import load_default_config, get_bot_names, get_discord_token
 from core.detection import CallDetector, CallDetectionResult
 from core.feedback import FeedbackManager, check_content
-from core.llm import create_llm_client, BaseLLMClient
+from core.llm import create_llm_clients, LLMClients
 from core.memory import MemoryManager
 from core.skills.loader import SkillLoader
 from core.skills.router import SkillRouter
@@ -55,7 +55,7 @@ class GireyBot(commands.Bot):
         self.bot_name: str = self.config.get("bot", {}).get("name", "기리봇")
 
         # 3. 컴포넌트 초기화
-        self.llm_client: BaseLLMClient = create_llm_client(self.config)
+        self.llm: LLMClients = create_llm_clients(self.config)
         self.memory: MemoryManager = MemoryManager(self.config)
         self.call_detector: Optional[CallDetector] = None
 
@@ -70,9 +70,14 @@ class GireyBot(commands.Bot):
         # 4. 스킬 시스템 초기화
         self.skill_loader: SkillLoader = SkillLoader(self.config)
         self.skill_router: Optional[SkillRouter] = None
-        self.skill_executor: SkillExecutor = SkillExecutor(self.llm_client)
+        self.skill_executor: SkillExecutor = SkillExecutor(self.llm.analysis)
 
-        logger.info(f"LLM 프로바이더 초기화됨: {self.llm_client.provider_name}")
+        logger.info(
+            f"LLM 초기화 완료 — "
+            f"simple={self.llm.simple.provider_name}/{self.llm.simple.model}, "
+            f"roleplay={self.llm.roleplay.provider_name}/{self.llm.roleplay.model}, "
+            f"analysis={self.llm.analysis.provider_name}/{self.llm.analysis.model}"
+        )
 
     async def setup_hook(self):
         """봇이 시작될 때 1회 실행되는 초기화 훅"""
@@ -87,7 +92,7 @@ class GireyBot(commands.Bot):
         # 3. 스킬 시스템 로드
         skills = self.skill_loader.load_all()
         if skills:
-            self.skill_router = SkillRouter(skills, self.llm_client)
+            self.skill_router = SkillRouter(skills, self.llm.simple)
             logger.info(f"스킬 시스템 초기화 완료: {len(skills)}개 로드")
 
         # 4. Cog 로드
@@ -170,7 +175,7 @@ class GireyBot(commands.Bot):
 
         # ── 피드백: 콘텐츠 검사 ──
         if self.config.get("feedback", {}).get("enabled", True):
-            check = await check_content(self.llm_client, message.content)
+            check = await check_content(self.llm.simple, message.content)
             if check.violation:
                 new_score = await self.feedback.add_violation(
                     user_id=message.author.id,
@@ -360,7 +365,7 @@ class GireyBot(commands.Bot):
     async def _handle_skill_create(self, message: discord.Message) -> None:
         """SkillCreator를 사용하여 스킬을 생성하고 결과를 전송합니다."""
         async with message.channel.typing():
-            creator = SkillCreator(self.llm_client)
+            creator = SkillCreator(self.llm.analysis)
             try:
                 draft = await creator.collect_info(message.content)
             except SkillCreationError as e:
@@ -385,7 +390,7 @@ class GireyBot(commands.Bot):
         if skills and self.skill_router:
             self.skill_router.update_skills(skills)
         elif skills:
-            self.skill_router = SkillRouter(skills, self.llm_client)
+            self.skill_router = SkillRouter(skills, self.llm.simple)
 
         logger.info(f"스킬 생성 완료: {draft.name} → {skill_path}")
 
@@ -445,7 +450,7 @@ class GireyBot(commands.Bot):
             if user_mode != "normal":
                 system_prompt = f"[USER_MODE: {user_mode}]\n\n{system_prompt}"
 
-            llm_response = await self.llm_client.chat(
+            llm_response = await self.llm.roleplay.chat(
                 prompt=message.content,
                 system_prompt=system_prompt,
                 context=context if context else None,
@@ -500,7 +505,7 @@ class GireyBot(commands.Bot):
         """유저 팩트 추출 과정을 비동기 배경 작업으로 전송"""
         asyncio.create_task(
             self.memory.extract_and_save_facts(
-                llm_client=self.llm_client,
+                llm_client=self.llm.simple,
                 guild_id=message.guild.id,
                 user_id=message.author.id,
                 user_message=message.content,
@@ -524,7 +529,7 @@ class GireyBot(commands.Bot):
         system_prompt = f"{tag}\n\n{system_prompt}"
 
         try:
-            llm_response = await self.llm_client.chat(
+            llm_response = await self.llm.roleplay.chat(
                 prompt=message.content,
                 system_prompt=system_prompt,
             )
@@ -549,7 +554,7 @@ class GireyBot(commands.Bot):
         system_prompt = f"[USER_MODE: refuse]\n\n{system_prompt}"
 
         try:
-            llm_response = await self.llm_client.chat(
+            llm_response = await self.llm.roleplay.chat(
                 prompt=message.content,
                 system_prompt=system_prompt,
             )
@@ -587,7 +592,7 @@ class GireyBot(commands.Bot):
         if result.matched_keyword:
             embed.add_field(name="매칭 키워드", value=f"`{result.matched_keyword}`", inline=True)
         embed.add_field(name="확신도", value=f"{result.confidence:.0%}", inline=True)
-        embed.set_footer(text=f"⚠️ LLM 설정 후 AI 응답이 활성화됩니다. ({self.llm_client.provider_name})")
+        embed.set_footer(text=f"⚠️ LLM 설정 후 AI 응답이 활성화됩니다. ({self.llm.roleplay.provider_name})")
 
         await message.reply(embed=embed, mention_author=False)
 
@@ -606,7 +611,7 @@ class GireyBot(commands.Bot):
                 bot_id=self.user.id,
                 bot_names=bot_names,
                 keywords=extra_keywords,
-                llm_client=self.llm_client,
+                llm_client=self.llm.simple,
                 auto_detect_enabled=auto_detect_config.get("enabled", True),
                 auto_detect_channels=auto_detect_config.get("channels", []),
             )
@@ -623,7 +628,7 @@ class GireyBot(commands.Bot):
         """
         logger.info("메모리 정리 주기 프로세스 시작...")
         try:
-            stats = await self.memory.cleanup(self.llm_client)
+            stats = await self.memory.cleanup(self.llm.analysis)
             logger.info(
                 f"메모리 정리 완료: "
                 f"채널 {stats.get('channels', 0)}개 분석, "
