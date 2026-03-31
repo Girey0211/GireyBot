@@ -5,9 +5,9 @@ Discord Support Agent — 봇 엔트리포인트
 import logging
 import os
 
-from core.logging import setup_logging
-from core.config_loader import load_default_config
-from core.agent import GireyBot
+from src.shared.logging import setup_logging
+from src.shared.config import load_default_config
+from src.main.agent import GireyBot
 
 _config = load_default_config()
 _log_level_str = _config.get("bot", {}).get("log_level", "INFO").upper()
