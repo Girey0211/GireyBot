@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /c/workplace/girey-bot -type d -not -path */.* -not -path */__pycache__ -not -path */.venv)"
+      "Bash(find /c/workplace/girey-bot -type d -not -path */.* -not -path */__pycache__ -not -path */.venv)",
+      "Bash(find /Users/mobyus/workplace/GireyBot/src/shared/skills -name \"SKILL.md\" -exec head -20 {} +)"
     ]
   }
 }

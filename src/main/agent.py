@@ -219,9 +219,8 @@ class GireyBot(commands.Bot):
                     return
 
             # ── 스킬 매칭 없음 → 기존 자유 대화 ──
-            await thinking_msg.delete()
+            await self._handle_free_chat(message, thinking_msg)
             thinking_msg = None
-            await self._handle_free_chat(message)
         finally:
             if thinking_msg:
                 try:
@@ -425,56 +424,99 @@ class GireyBot(commands.Bot):
 
         await message.reply(embed=embed, mention_author=False)
 
-    async def _handle_free_chat(self, message: discord.Message):
-        """스킬 매칭이 없을 때 기존 자유 대화 로직을 수행합니다."""
-        async with message.channel.typing():
-            # 유저 모드 확인 (refuse면 응답 거부)
-            user_mode = await self.feedback.get_response_mode(message.author.id)
-            if user_mode == "refuse":
-                await self._send_refuse_reply(message)
-                return
+    async def _handle_free_chat(
+        self,
+        message: discord.Message,
+        thinking_msg: discord.Message | None = None,
+    ):
+        """스킬 매칭이 없을 때 스트리밍으로 자유 대화 응답을 처리합니다."""
+        # 유저 모드 확인 (refuse면 응답 거부)
+        user_mode = await self.feedback.get_response_mode(message.author.id)
+        if user_mode == "refuse":
+            if thinking_msg:
+                await thinking_msg.delete()
+            await self._send_refuse_reply(message)
+            return
 
-            context = await self.memory.build_context(
-                guild_id=message.guild.id,
-                channel_id=message.channel.id,
-                user_id=message.author.id,
-                user_message=message.content,
-            )
+        context = await self.memory.build_context(
+            guild_id=message.guild.id,
+            channel_id=message.channel.id,
+            user_id=message.author.id,
+            user_message=message.content,
+        )
 
-            persona = self.memory.load_persona()
-            system_prompt = persona or (
-                f"당신은 Discord 서버 지원 봇 '{self.bot_name}'입니다. "
-                "사용자의 요청에 친절하고 간결하게 답변하세요. "
-            )
-            # 유저 모드 태그를 시스템 프롬프트에 주입
-            if user_mode != "normal":
-                system_prompt = f"[USER_MODE: {user_mode}]\n\n{system_prompt}"
+        persona = self.memory.load_persona()
+        system_prompt = persona or (
+            f"당신은 Discord 서버 지원 봇 '{self.bot_name}'입니다. "
+            "사용자의 요청에 친절하고 간결하게 답변하세요. "
+        )
+        if user_mode != "normal":
+            system_prompt = f"[USER_MODE: {user_mode}]\n\n{system_prompt}"
 
-            llm_response = await self.llm.roleplay.chat(
+        response_config = self.config.get("response", {})
+        max_len = response_config.get("max_length", 2000)
+
+        accumulated = ""
+        last_edit_len = 0
+        edit_threshold = 50  # 50자마다 메시지 편집
+        error_occurred = False
+
+        try:
+            async for chunk in self.llm.roleplay.chat_stream(
                 prompt=message.content,
                 system_prompt=system_prompt,
                 context=context if context else None,
-            )
+            ):
+                accumulated += chunk
+                # Discord 레이트 리밋 고려: 50자 누적마다 편집
+                if thinking_msg and len(accumulated) - last_edit_len >= edit_threshold:
+                    display = accumulated if len(accumulated) <= max_len else accumulated[: max_len - 20] + "…"
+                    try:
+                        await thinking_msg.edit(content=display)
+                        last_edit_len = len(accumulated)
+                    except discord.HTTPException:
+                        pass
+        except Exception as e:
+            logger.error(f"[FreeChat] 스트리밍 실패: {e}")
+            error_occurred = True
 
-        if llm_response.available and llm_response.content:
-            await self._send_llm_reply(message, llm_response.content)
-            await self._record_conversation(message, llm_response.content)
-            self._trigger_fact_extraction(message, llm_response.content)
-
-            if self.call_detector:
-                self.call_detector.register_active_conversation(
-                    channel_id=message.channel.id,
-                    user_message=message.content,
-                    bot_response=llm_response.content,
-                )
-        else:
-            reason = llm_response.reason or "알 수 없는 오류"
+        if error_occurred or not accumulated:
+            reason = "스트리밍 응답 생성에 실패했습니다." if error_occurred else "알 수 없는 오류"
             embed = discord.Embed(
                 title=f"🤖 {self.bot_name} — 오류",
                 description=f"응답 생성에 실패했습니다.\n`{reason}`",
                 color=discord.Color.red(),
             )
+            if thinking_msg:
+                try:
+                    await thinking_msg.delete()
+                except discord.HTTPException:
+                    pass
             await message.reply(embed=embed, mention_author=False)
+            return
+
+        # 길이 초과 시 자르기
+        if len(accumulated) > max_len:
+            accumulated = accumulated[: max_len - 20] + "\n\n…(응답이 잘렸습니다)"
+
+        # 최종 편집 또는 새 답장
+        if thinking_msg:
+            try:
+                await thinking_msg.edit(content=accumulated)
+            except discord.HTTPException:
+                await message.reply(accumulated, mention_author=False)
+        else:
+            await message.reply(accumulated, mention_author=False)
+
+        await self._record_conversation(message, accumulated)
+        self._trigger_fact_extraction(message, accumulated)
+
+        if self.call_detector:
+            self.call_detector.register_active_conversation(
+                channel_id=message.channel.id,
+                user_message=message.content,
+                bot_response=accumulated,
+            )
 
     async def _send_llm_reply(self, message: discord.Message, content: str):
         """메시지 길이 제한(Discord 2000자)을 고려하여 응답 전송"""

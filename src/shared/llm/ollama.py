@@ -1,13 +1,10 @@
 """
 Ollama 기반 LLM 클라이언트
 
-Ollama 네이티브 API(/api/chat)를 사용하여 요청을 전송합니다.
-think=False 를 페이로드에 직접 포함하여 Qwen3 계열의 think 모드를 비활성화합니다.
+ollama Python 패키지(AsyncClient)를 사용하여 요청을 전송합니다.
 """
 
 import logging
-
-import aiohttp
 
 from src.shared.llm.base import BaseLLMClient, LLMResponse
 
@@ -17,38 +14,77 @@ DEFAULT_HOST = "http://localhost:11434"
 
 
 class OllamaClient(BaseLLMClient):
-    """Ollama 네이티브 API 기반 LLM 클라이언트"""
+    """ollama Python 패키지 기반 LLM 클라이언트"""
 
     def __init__(self, model: str = "llama3", host: str | None = None):
         super().__init__(model)
         self.host = host or DEFAULT_HOST
-        self._api_url = f"{self.host}/api/chat"
         self._available = True
         logger.info(f"OllamaClient 초기화 완료 — model={self.model}, host={self.host}")
 
+    def _make_client(self):
+        from ollama import AsyncClient
+        return AsyncClient(host=self.host)
+
     async def _request(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 2000) -> str:
-        """Ollama /api/chat 엔드포인트에 요청을 보내고 content를 반환합니다."""
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "think": False,
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
-        }
+        """Ollama에 단일 요청을 보내고 content를 반환합니다."""
+        client = self._make_client()
         logger.debug(
-            "[Ollama] 요청 전송 — url=%s, model=%s, messages=%s",
-            self._api_url,
+            "[Ollama] 요청 전송 — model=%s, messages=%s",
             self.model,
             messages,
         )
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self._api_url, json=payload) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                return data["message"]["content"]
+        response = await client.chat(
+            model=self.model,
+            messages=messages,
+            stream=False,
+            options={
+                "temperature": temperature,
+                "repeat_penalty": 1.3,
+                "num_predict": max_tokens,
+                #"stop": ["<end_of_turn>", "<start_of_turn>"],
+            },
+        )
+        return response.message.content
+
+    async def chat_stream(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        context: str | None = None,
+    ):
+        """Ollama 스트리밍 채팅 — 토큰 단위로 content를 yield합니다."""
+        if not self._available:
+            return
+
+        # system 메시지는 하나로 합쳐야 Gemma 계열 템플릿이 깨지지 않음
+        combined_system = "\n\n".join(filter(None, [system_prompt, context]))
+        messages = []
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            client = self._make_client()
+            async for chunk in await client.chat(
+                model=self.model,
+                messages=messages,
+                stream=True,
+                options={
+                    "temperature": 0.7,
+                    "top_p": 0.95,
+                    "top_k": 64,
+                    "repeat_penalty": 1.3,
+                    "num_predict": 2000,
+                    "num_ctx": 2048,
+                    "stop": ["<end_of_turn>", "<start_of_turn>"],
+                },
+            ):
+                content = chunk.message.content
+                if content:
+                    yield content
+        except Exception as e:
+            logger.error(f"[Ollama] 스트리밍 채팅 실패: {e}")
 
     async def analyze_call_intent(
         self,
@@ -125,11 +161,10 @@ class OllamaClient(BaseLLMClient):
         if not self._available:
             return self._unavailable_response("Ollama 서버에 연결할 수 없습니다.")
 
+        combined_system = "\n\n".join(filter(None, [system_prompt, context]))
         messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        if context:
-            messages.append({"role": "system", "content": context})
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
         messages.append({"role": "user", "content": prompt})
 
         try:

@@ -218,15 +218,20 @@ class SkillRouter:
         """
         total_triggers = len(skill.triggers) or 1
 
-        # 1. 매칭 비율 (0~40점)
-        match_ratio = len(matched_triggers) / total_triggers
-        ratio_score = match_ratio * 40
+        # 1. 기본 점수 (40점) — 트리거가 하나라도 매칭되면 부여
+        #    ratio_score 방식은 단일 트리거 스킬의 짧은 키워드가 임계값을
+        #    넘지 못하는 문제가 있어 고정 기본점수로 대체
+        base_score = 40
 
-        # 2. 트리거 길이 점수 (0~30점) — 긴 트리거는 더 구체적
+        # 2. 트리거 길이 점수 (0~25점) — 긴 트리거는 더 구체적
         max_trigger_len = max(len(t) for t in matched_triggers)
-        length_score = min(max_trigger_len / 10, 1.0) * 30
+        length_score = min(max_trigger_len / 10, 1.0) * 25
 
-        # 3. 복수 매칭 보너스 (0~15점)
+        # 3. 매칭 비율 보너스 (0~15점) — 트리거를 많이 맞출수록 보너스
+        match_ratio = len(matched_triggers) / total_triggers
+        ratio_bonus = match_ratio * 15
+
+        # 4. 복수 매칭 보너스 (0~15점)
         multi_bonus = min(len(matched_triggers) - 1, 3) * 5
 
         # 4. 중복 감점 — 같은 트리거가 다른 스킬에도 있으면 감점
@@ -247,7 +252,7 @@ class SkillRouter:
                 break
 
         confidence = (
-            ratio_score + length_score + multi_bonus
+            base_score + length_score + ratio_bonus + multi_bonus
             - overlap_penalty - management_penalty
         )
         return max(0.0, min(100.0, confidence))

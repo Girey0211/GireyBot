@@ -60,6 +60,10 @@ def create_llm_clients(config: dict[str, Any]) -> LLMClients:
               base_url: null
             ollama:
               host: null
+            mlx_lm:
+              base_url: http://localhost:11435/v1
+              api_key: dummy
+              model: null   # profile.model로 지정
     """
     llm_config = config.get("llm", {})
     profiles = llm_config.get("profiles", {})
@@ -78,6 +82,12 @@ def create_llm_clients(config: dict[str, Any]) -> LLMClients:
                 model=model or provider_cfg.get("model", "gpt-4o-mini"),
                 api_key=provider_cfg.get("api_key"),
                 base_url=provider_cfg.get("base_url"),
+            )
+        elif provider == "mlx_lm":
+            return OpenAIClient(
+                model=model or provider_cfg.get("model", ""),
+                api_key=provider_cfg.get("api_key", "dummy"),
+                base_url=provider_cfg.get("base_url", "http://localhost:11435/v1"),
             )
         else:
             return OllamaClient(

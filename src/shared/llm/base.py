@@ -3,6 +3,7 @@ LLM 클라이언트 — 베이스 클래스 및 공통 응답 모델
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,6 +68,17 @@ class BaseLLMClient(ABC):
             context: 메모리 컨텍스트 (최근 대화, 유저 팩트 등)
         """
         ...
+
+    async def chat_stream(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        context: str | None = None,
+    ) -> AsyncIterator[str]:
+        """스트리밍 채팅. 기본 구현은 chat()으로 폴백하여 전체 응답을 한 번에 반환."""
+        response = await self.chat(prompt, system_prompt, context)
+        if response.available and response.content:
+            yield response.content
 
     def _unavailable_response(self, reason: str) -> LLMResponse:
         """사용 불가 응답 생성 헬퍼"""

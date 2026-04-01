@@ -61,6 +61,37 @@ class OpenAIClient(BaseLLMClient):
             logger.error(f"OpenAI 클라이언트 초기화 실패: {e}")
             self._available = False
 
+    async def chat_stream(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        context: str | None = None,
+    ):
+        """OpenAI 스트리밍 채팅 — 토큰 단위로 content를 yield합니다."""
+        if not self._available or not self._client:
+            return
+
+        combined_system = "\n\n".join(filter(None, [system_prompt, context]))
+        messages = []
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            stream = await self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=2000,
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+        except Exception as e:
+            logger.error(f"[OpenAI] 스트리밍 채팅 실패: {e}")
+
     async def analyze_call_intent(
         self,
         message_content: str,
@@ -164,11 +195,10 @@ class OpenAIClient(BaseLLMClient):
                 "OpenAI API가 설정되지 않았습니다."
             )
 
+        combined_system = "\n\n".join(filter(None, [system_prompt, context]))
         messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        if context:
-            messages.append({"role": "system", "content": context})
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
         messages.append({"role": "user", "content": prompt})
 
         try:

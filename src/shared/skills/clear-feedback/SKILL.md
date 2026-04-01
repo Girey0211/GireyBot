@@ -3,7 +3,14 @@ description: 피드백을 초기화하는 스킬
 executor: local
 name: clear-feedback
 triggers:
+- 피드백
 - 피드백 초기화
+- 피드백 리셋
+- 피드백 지워
+- 제재 초기화
+- 점수 초기화
+- feedback
+- reset
 user-invocable: true
 ---
 
