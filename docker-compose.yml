@@ -6,4 +6,34 @@ services:
       - ./secrets.yaml:/app/secrets.yaml:ro
       - ./data/memory.db:/app/data/memory.db
       - ./data/persona.md:/app/data/persona.md:ro
+      - ./data/knowledge:/app/data/knowledge
       - ./skills:/app/skills
+    depends_on:
+      chroma:
+        condition: service_healthy
+    networks:
+      - girey-net
+
+  chroma:
+    image: chromadb/chroma:1.5.3
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/data
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - girey-net
+
+volumes:
+  chroma-data:
+
+networks:
+  girey-net:
+    driver: bridge

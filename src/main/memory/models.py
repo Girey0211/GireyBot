@@ -78,6 +78,18 @@ class UserFeedback:
 
 
 @dataclass
+class KnowledgeDoc:
+    """RAG 지식 문서"""
+    id: int
+    title: str
+    content: str
+    category: str
+    author_id: int | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class UserFact:
     """유저별 학습된 사실"""
     id: int

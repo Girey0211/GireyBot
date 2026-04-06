@@ -2,7 +2,7 @@
 name = "girey-bot"
 version = "0.1.0"
 description = "Discord 서버 운영 지원 AI 에이전트"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "aiosqlite>=0.22.1",
     "ollama>=0.4.0",
@@ -12,6 +12,8 @@ dependencies = [
     "openai>=2.26.0",
     "pynacl>=1.6.2",
     "PyYAML>=6.0",
+    "chromadb>=0.6.0",
+    "trafilatura>=2.0.0",
 ]
 
 [build-system]
@@ -23,3 +25,4 @@ packages = ["."]
 
 [project.scripts]
 server = "bot:main"
+ingest = "tools.ingest.__main__:main"

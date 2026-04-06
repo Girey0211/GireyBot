@@ -760,7 +760,7 @@ class SkillCommands(commands.Cog):
             else:
                 context = "## 대화 세션\n(이 채널에 최근 대화 기록이 없습니다.)"
         else:
-            context = await self.bot.memory.build_context(
+            context, _ = await self.bot.memory.build_context(
                 guild_id=interaction.guild_id,
                 channel_id=interaction.channel_id,
                 user_id=interaction.user.id,

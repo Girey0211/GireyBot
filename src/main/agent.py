@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +22,10 @@ from src.main.skills.loader import SkillLoader
 from src.main.skills.router import SkillRouter
 from src.main.skills.executor import SkillExecutor
 from src.main.skills.creator import SkillCreator, SkillCreationError
+from src.main.rag.store import RAGStore
+from src.main.rag.embedder import Embedder
+from src.main.rag.ingest import Ingestor
+from src.main.rag.retriever import Retriever
 
 logger = logging.getLogger("girey-bot.agent")
 
@@ -72,6 +77,12 @@ class GireyBot(commands.Bot):
         self.skill_router: Optional[SkillRouter] = None
         self.skill_executor: SkillExecutor = SkillExecutor(self.llm.analysis)
 
+        # 5. RAG 시스템 초기화
+        self.rag_store: RAGStore = RAGStore(self.config)
+        self.rag_embedder: Embedder = Embedder(self.config)
+        self.rag_ingestor: Ingestor = Ingestor(self.rag_store, self.rag_embedder, self.config)
+        self.rag_retriever: Retriever = Retriever(self.rag_store, self.rag_embedder, self.config)
+
         logger.info(
             f"LLM 초기화 완료 — "
             f"simple={self.llm.simple.provider_name}/{self.llm.simple.model}, "
@@ -89,6 +100,14 @@ class GireyBot(commands.Bot):
         await self.memory.initialize()
         logger.info("메모리 시스템 초기화 완료")
 
+        # 2-1. RAG 시스템 구동
+        await self.rag_store.initialize()
+        if self.rag_store.is_available:
+            stats = await self.rag_ingestor.ingest_from_db(self.memory)
+            logger.info(f"RAG DB 인덱싱 완료: {stats}")
+        else:
+            logger.warning("RAG 비활성화 — ChromaDB 연결 실패")
+
         # 3. 스킬 시스템 로드
         skills = self.skill_loader.load_all()
         if skills:
@@ -100,6 +119,7 @@ class GireyBot(commands.Bot):
             "src.main.cogs.general",
             "src.main.cogs.skill_commands",
             "src.main.cogs.voice",
+            "src.main.cogs.rag",
         ]
 
         for extension in initial_extensions:
@@ -272,11 +292,12 @@ class GireyBot(commands.Bot):
                 else:
                     context = "## 대화 세션\n(이 채널에 최근 대화 기록이 없습니다.)"
             else:
-                context = await self.memory.build_context(
+                context, _ = await self.memory.build_context(
                     guild_id=message.guild.id,
                     channel_id=message.channel.id,
                     user_id=message.author.id,
                     user_message=message.content,
+                    retriever=self.rag_retriever,
                 )
 
             result_text = await self.skill_executor.execute(
@@ -438,11 +459,20 @@ class GireyBot(commands.Bot):
             await self._send_refuse_reply(message)
             return
 
-        context = await self.memory.build_context(
+        # 봇 이름/별명을 제거한 순수 질문을 RAG 쿼리에 사용
+        rag_query = re.sub(
+            r"(?i)\b" + re.escape(self.bot_name) + r"\b",
+            "",
+            message.content,
+        ).strip(" ,!?")
+
+        context, rag_context = await self.memory.build_context(
             guild_id=message.guild.id,
             channel_id=message.channel.id,
             user_id=message.author.id,
             user_message=message.content,
+            retriever=self.rag_retriever,
+            rag_query=rag_query or message.content,
         )
 
         persona = self.memory.load_persona()
@@ -452,6 +482,12 @@ class GireyBot(commands.Bot):
         )
         if user_mode != "normal":
             system_prompt = f"[USER_MODE: {user_mode}]\n\n{system_prompt}"
+
+        # RAG 결과는 user prompt 앞에 직접 주입 — system보다 훨씬 높은 우선순위
+        if rag_context:
+            prompt = f"{rag_context}\n\n---\n위 정보를 바탕으로 다음 질문에 답해줘:\n{message.content}"
+        else:
+            prompt = message.content
 
         response_config = self.config.get("response", {})
         max_len = response_config.get("max_length", 2000)
@@ -463,7 +499,7 @@ class GireyBot(commands.Bot):
 
         try:
             async for chunk in self.llm.roleplay.chat_stream(
-                prompt=message.content,
+                prompt=prompt,
                 system_prompt=system_prompt,
                 context=context if context else None,
             ):

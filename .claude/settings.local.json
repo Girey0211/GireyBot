@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(find /c/workplace/girey-bot -type d -not -path */.* -not -path */__pycache__ -not -path */.venv)",
-      "Bash(find /Users/mobyus/workplace/GireyBot/src/shared/skills -name \"SKILL.md\" -exec head -20 {} +)"
+      "Bash(find /Users/mobyus/workplace/GireyBot/src/shared/skills -name \"SKILL.md\" -exec head -20 {} +)",
+      "Bash(docker --version)",
+      "Bash(docker compose:*)",
+      "Bash(while ! grep -q \"Pulled\\\\|Error\\\\|error\" /private/tmp/claude-501/-Users-mobyus-workplace-GireyBot/ec408d28-1e08-451a-b032-87f55e67e542/tasks/b8xx9kyz8.output)",
+      "Bash(do sleep:*)",
+      "Bash(done)",
+      "Bash(docker pull:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "WebSearch",
+      "WebFetch(domain:docs.trychroma.com)",
+      "WebFetch(domain:cookbook.chromadb.dev)"
     ]
   }
 }

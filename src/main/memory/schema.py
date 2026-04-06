@@ -96,6 +96,18 @@ CREATE TABLE IF NOT EXISTS user_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON user_feedback(user_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_guild ON user_feedback(guild_id, score);
+
+CREATE TABLE IF NOT EXISTS knowledge_docs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT    NOT NULL,
+    content     TEXT    NOT NULL,
+    category    TEXT    NOT NULL DEFAULT 'general',
+    author_id   INTEGER,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_docs(category);
 """
 
 
@@ -109,3 +121,23 @@ async def migrate(db: aiosqlite.Connection) -> None:
             "ALTER TABLE conversations ADD COLUMN channel_name TEXT NOT NULL DEFAULT ''"
         )
         logger.info("마이그레이션: conversations.channel_name 컬럼 추가")
+
+    # knowledge_docs 테이블 마이그레이션
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_docs'"
+    ) as cursor:
+        exists = await cursor.fetchone()
+    if not exists:
+        await db.execute("""
+            CREATE TABLE knowledge_docs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT    NOT NULL,
+                content     TEXT    NOT NULL,
+                category    TEXT    NOT NULL DEFAULT 'general',
+                author_id   INTEGER,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("CREATE INDEX idx_knowledge_category ON knowledge_docs(category)")
+        logger.info("마이그레이션: knowledge_docs 테이블 생성")

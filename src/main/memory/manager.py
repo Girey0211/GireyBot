@@ -19,6 +19,7 @@ from src.main.memory.models import (
     Conversation,
     Summary,
     ImportantEvent,
+    KnowledgeDoc,
     UserFact,
 )
 from src.main.memory.schema import SCHEMA_SQL, migrate
@@ -426,9 +427,23 @@ class MemoryManager:
         channel_id: int,
         user_id: int,
         user_message: str = "",
-    ) -> str:
-        """LLM에 전달할 메모리 컨텍스트를 조립합니다."""
+        retriever=None,
+        rag_query: str | None = None,
+    ) -> tuple[str, str]:
+        """
+        LLM에 전달할 메모리 컨텍스트를 조립합니다.
+
+        Args:
+            rag_query: RAG 검색에 사용할 텍스트. None이면 user_message 사용.
+                       봇 이름/호출어를 제거한 순수 질문을 넘기면 검색 정확도가 높아짐.
+
+        Returns:
+            (memory_context, rag_context)
+            - memory_context: 대화 기록, 팩트, 요약 등 — system prompt에 추가
+            - rag_context: RAG 검색 결과 — user prompt 앞에 주입해야 효과적
+        """
         parts: list[str] = []
+        rag_context: str = ""
 
         # 유저 메시지에서 관련성 판단용 키워드 추출
         keywords = self._extract_keywords(user_message) if user_message else []
@@ -509,10 +524,14 @@ class MemoryManager:
                 else:
                     parts.append(f"## {label} 대화 기록\n- 해당 기간에 저장된 대화가 없습니다.")
 
-        if not parts:
-            return ""
+        # 6. RAG 검색 결과 (별도 반환 — user prompt에 주입)
+        if retriever is not None and user_message:
+            rag_context = await retriever.query(rag_query or user_message)
 
-        return "\n\n".join(parts)
+        if not parts:
+            return "", rag_context
+
+        return "\n\n".join(parts), rag_context
 
     @staticmethod
     def _parse_date_reference(
@@ -560,6 +579,73 @@ class MemoryManager:
             return start, end, "오늘"
 
         return None
+
+    # ─── 지식 문서 ──────────────────────────────────────────
+
+    async def save_knowledge(
+        self,
+        title: str,
+        content: str,
+        category: str = "general",
+        author_id: int | None = None,
+    ) -> int:
+        """지식 문서를 저장하고 ID를 반환합니다."""
+        now = datetime.now(KST).isoformat()
+        async with self._db.execute(
+            """
+            INSERT INTO knowledge_docs (title, content, category, author_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (title, content, category, author_id, now, now),
+        ) as cursor:
+            await self._db.commit()
+            logger.info(f"지식 저장: title={title}, category={category}")
+            return cursor.lastrowid
+
+    async def update_knowledge(self, doc_id: int, content: str) -> bool:
+        """지식 문서 내용을 수정합니다."""
+        now = datetime.now(KST).isoformat()
+        async with self._db.execute(
+            "UPDATE knowledge_docs SET content = ?, updated_at = ? WHERE id = ?",
+            (content, now, doc_id),
+        ) as cursor:
+            await self._db.commit()
+            return cursor.rowcount > 0
+
+    async def delete_knowledge(self, doc_id: int) -> bool:
+        """지식 문서를 삭제합니다."""
+        async with self._db.execute(
+            "DELETE FROM knowledge_docs WHERE id = ?",
+            (doc_id,),
+        ) as cursor:
+            await self._db.commit()
+            return cursor.rowcount > 0
+
+    async def get_knowledge(self, doc_id: int) -> KnowledgeDoc | None:
+        """ID로 지식 문서를 조회합니다."""
+        async with self._db.execute(
+            "SELECT * FROM knowledge_docs WHERE id = ?",
+            (doc_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return KnowledgeDoc(**dict(row)) if row else None
+
+    async def list_knowledge(
+        self,
+        category: str | None = None,
+        limit: int = 100,
+    ) -> list[KnowledgeDoc]:
+        """지식 문서 목록을 조회합니다."""
+        if category:
+            query = "SELECT * FROM knowledge_docs WHERE category = ? ORDER BY created_at DESC LIMIT ?"
+            params = (category, limit)
+        else:
+            query = "SELECT * FROM knowledge_docs ORDER BY created_at DESC LIMIT ?"
+            params = (limit,)
+
+        async with self._db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return [KnowledgeDoc(**dict(r)) for r in rows]
 
     # ─── 팩트 자동 추출 ─────────────────────────────────────
 
